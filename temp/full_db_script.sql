@@ -1,0 +1,254 @@
+-- 删除旧的schema以确保一个干净的开始
+DROP SCHEMA IF EXISTS beer_terms CASCADE;
+
+-- 创建 beer_terms schema
+CREATE SCHEMA IF NOT EXISTS beer_terms;
+
+-- 设置默认搜索路径
+SET search_path TO beer_terms, public;
+
+-- 创建分类表
+CREATE TABLE IF NOT EXISTS beer_terms.categories (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name_en TEXT NOT NULL,
+  name_zh TEXT NOT NULL,
+  description TEXT,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 创建分类索引
+CREATE INDEX idx_categories_sort_order ON beer_terms.categories(sort_order);
+
+-- 创建用户扩展表
+CREATE TABLE IF NOT EXISTS beer_terms.users (
+  id UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  role TEXT CHECK (role IN ('user', 'contributor', 'admin')) DEFAULT 'user',
+  reputation INTEGER DEFAULT 0,
+  contribution_count INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 创建用户索引
+CREATE INDEX idx_users_role ON beer_terms.users(role);
+CREATE INDEX idx_users_reputation ON beer_terms.users(reputation DESC);
+
+-- 创建术语表
+CREATE TABLE IF NOT EXISTS beer_terms.terms (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  english_term TEXT NOT NULL,
+  chinese_term TEXT NOT NULL,
+  chinese_explanation TEXT NOT NULL,
+  english_explanation TEXT NOT NULL,
+  category_id UUID REFERENCES beer_terms.categories(id) ON DELETE SET NULL,
+  tags TEXT[] DEFAULT '{}',
+  status TEXT CHECK (status IN ('draft', 'pending', 'approved', 'rejected')) DEFAULT 'pending',
+  created_by UUID REFERENCES beer_terms.users(id) ON DELETE SET NULL,
+  approved_by UUID REFERENCES beer_terms.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  approved_at TIMESTAMP WITH TIME ZONE
+);
+
+-- 创建术语索引
+CREATE INDEX idx_terms_status ON beer_terms.terms(status);
+CREATE INDEX idx_terms_category ON beer_terms.terms(category_id);
+CREATE INDEX idx_terms_english ON beer_terms.terms(english_term);
+CREATE INDEX idx_terms_chinese ON beer_terms.terms(chinese_term);
+CREATE INDEX idx_terms_created_by ON beer_terms.terms(created_by);
+CREATE INDEX idx_terms_approved_by ON beer_terms.terms(approved_by);
+
+-- 创建术语建议表
+CREATE TABLE IF NOT EXISTS beer_terms.term_suggestions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  term_id UUID REFERENCES beer_terms.terms(id) ON DELETE CASCADE,
+  english_term TEXT NOT NULL,
+  chinese_term TEXT NOT NULL,
+  chinese_explanation TEXT NOT NULL,
+  english_explanation TEXT NOT NULL,
+  category_id UUID REFERENCES beer_terms.categories(id) ON DELETE SET NULL,
+  suggestion_type TEXT CHECK (suggestion_type IN ('add', 'edit', 'delete')) NOT NULL,
+  reason TEXT,
+  status TEXT CHECK (status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
+  suggested_by UUID REFERENCES beer_terms.users(id) ON DELETE CASCADE,
+  reviewed_by UUID REFERENCES beer_terms.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  reviewed_at TIMESTAMP WITH TIME ZONE
+);
+
+-- 创建建议索引
+CREATE INDEX idx_suggestions_term ON beer_terms.term_suggestions(term_id);
+CREATE INDEX idx_suggestions_status ON beer_terms.term_suggestions(status);
+CREATE INDEX idx_suggestions_suggested_by ON beer_terms.term_suggestions(suggested_by);
+CREATE INDEX idx_suggestions_reviewed_by ON beer_terms.term_suggestions(reviewed_by);
+
+-- 创建用户活动表
+CREATE TABLE IF NOT EXISTS beer_terms.user_activities (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES beer_terms.users(id) ON DELETE CASCADE,
+  activity_type TEXT CHECK (activity_type IN ('create', 'edit', 'suggest', 'approve')) NOT NULL,
+  target_type TEXT CHECK (target_type IN ('term', 'suggestion')) NOT NULL,
+  target_id UUID NOT NULL,
+  points INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 创建活动索引
+CREATE INDEX idx_activities_user ON beer_terms.user_activities(user_id);
+CREATE INDEX idx_activities_target ON beer_terms.user_activities(target_type, target_id);
+CREATE INDEX idx_activities_created ON beer_terms.user_activities(created_at DESC);
+
+-- 为所有表启用RLS
+ALTER TABLE beer_terms.categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE beer_terms.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE beer_terms.terms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE beer_terms.term_suggestions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE beer_terms.user_activities ENABLE ROW LEVEL SECURITY;
+
+-- 分类表：所有人可读
+CREATE POLICY "Categories are viewable by everyone" ON beer_terms.categories
+  FOR SELECT USING (true);
+
+-- 分类表：仅管理员可写
+CREATE POLICY "Categories are editable by admins" ON beer_terms.categories
+  FOR ALL USING (
+    auth.uid() IN (
+      SELECT id FROM beer_terms.users WHERE role = 'admin'
+    )
+  );
+
+-- 用户表：所有人可读基本信息
+CREATE POLICY "Users basic info is viewable by everyone" ON beer_terms.users
+  FOR SELECT USING (true);
+
+-- 用户表：用户可更新自己的信息
+CREATE POLICY "Users can update own profile" ON beer_terms.users
+  FOR UPDATE USING (auth.uid() = id);
+
+-- 用户表：仅管理员可更新角色
+CREATE POLICY "Only admins can update user roles" ON beer_terms.users
+  FOR UPDATE USING (
+    auth.uid() IN (
+      SELECT id FROM beer_terms.users WHERE role = 'admin'
+    )
+  );
+
+-- 术语表：所有人可读已审核术语
+CREATE POLICY "Approved terms are viewable by everyone" ON beer_terms.terms
+  FOR SELECT USING (status = 'approved');
+
+-- 术语表：注册用户可查看待审核术语
+CREATE POLICY "Contributors can view pending terms" ON beer_terms.terms
+  FOR SELECT USING (
+    auth.uid() IN (
+      SELECT id FROM beer_terms.users WHERE role IN ('contributor', 'admin')
+    )
+  );
+
+-- 术语表：注册用户可添加术语
+CREATE POLICY "Authenticated users can add terms" ON beer_terms.terms
+  FOR INSERT WITH CHECK (auth.uid() = created_by);
+
+-- 术语表：贡献者可编辑术语
+CREATE POLICY "Contributors can edit terms" ON beer_terms.terms
+  FOR UPDATE USING (
+    auth.uid() IN (
+      SELECT id FROM beer_terms.users WHERE role IN ('contributor', 'admin')
+    )
+  );
+
+-- 术语表：管理员可删除术语
+CREATE POLICY "Admins can delete terms" ON beer_terms.terms
+  FOR DELETE USING (
+    auth.uid() IN (
+      SELECT id FROM beer_terms.users WHERE role = 'admin'
+    )
+  );
+
+-- 建议表：所有人可读
+CREATE POLICY "Suggestions are viewable by everyone" ON beer_terms.term_suggestions
+  FOR SELECT USING (true);
+
+-- 建议表：注册用户可添加建议
+CREATE POLICY "Authenticated users can add suggestions" ON beer_terms.term_suggestions
+  FOR INSERT WITH CHECK (auth.uid() = suggested_by);
+
+-- 建议表：用户可更新自己的建议
+CREATE POLICY "Users can update own suggestions" ON beer_terms.term_suggestions
+  FOR UPDATE USING (auth.uid() = suggested_by);
+
+-- 建议表：贡献者可审核建议
+CREATE POLICY "Contributors can review suggestions" ON beer_terms.term_suggestions
+  FOR UPDATE USING (
+    auth.uid() IN (
+      SELECT id FROM beer_terms.users WHERE role IN ('contributor', 'admin')
+    )
+  );
+
+-- 活动表：所有人可读
+CREATE POLICY "Activities are viewable by everyone" ON beer_terms.user_activities
+  FOR SELECT USING (true);
+
+-- 活动表：用户可查看自己的活动
+CREATE POLICY "Users can view own activities" ON beer_terms.user_activities
+  FOR SELECT USING (auth.uid() = user_id);
+
+-- 活动表：系统自动记录活动
+CREATE POLICY "System can record activities" ON beer_terms.user_activities
+  FOR INSERT WITH CHECK (true);
+
+-- 插入啤酒相关分类
+INSERT INTO beer_terms.categories (name_en, name_zh, description, sort_order) VALUES
+  ('Brewing Process', '酿造工艺', '啤酒酿造的各个工艺环节', 1),
+  ('Ingredients', '原料', '啤酒酿造所需的各种原料', 2),
+  ('Beer Styles', '啤酒风格', '不同类型的啤酒风格分类', 3),
+  ('Equipment', '设备', '酿造和饮用啤酒所需的设备', 4),
+  ('Tasting', '品鉴', '啤酒品鉴相关的术语', 5),
+  ('Storage', '储存', '啤酒储存和保鲜相关术语', 6),
+  ('Serving', '侍酒', '啤酒的侍酒和服务方式', 7),
+  ('Culture', '文化', '啤酒文化和历史相关术语', 8);
+
+-- 插入一些示例术语
+-- 注意：执行此部分前，请确保 beer_terms.users 表中已存在 role = 'admin' 的用户
+-- 如果没有，请先手动或通过脚本创建，否则 (SELECT id FROM beer_terms.users WHERE role = 'admin' LIMIT 1) 会返回 NULL
+-- INSERT INTO beer_terms.terms (english_term, chinese_term, chinese_explanation, english_explanation, category_id, tags, status, created_by) VALUES
+--   ('IPA', '印度淡色艾尔', '一种以啤酒花香气浓郁为特色的啤酒风格，起源于英国殖民印度时期。', 'India Pale Ale, a hop-forward beer style originally brewed in England for export to India.', 
+--    (SELECT id FROM beer_terms.categories WHERE name_en = 'Beer Styles'), '{"hoppy", "bitter", "aromatic"}', 'approved', 
+--    (SELECT id FROM beer_terms.users WHERE role = 'admin' LIMIT 1)),
+--   
+--   ('Mash', '糖化', '将麦芽与水混合，通过酶的作用将淀粉转化为可发酵糖的过程。', 'The process of mixing milled grain with water to convert starches into fermentable sugars through enzymatic action.',
+--    (SELECT id FROM beer_terms.categories WHERE name_en = 'Brewing Process'), '{"process", "malt", "sugar"}', 'approved',
+--    (SELECT id FROM beer_terms.users WHERE role = 'admin' LIMIT 1)),
+--   
+--   ('Hops', '啤酒花', '啤酒酿造中使用的雌性啤酒花植物的球果，提供苦味、香气和防腐作用。', 'The female flowers of the hop plant used in brewing to provide bitterness, flavor, and aroma while acting as a natural preservative.',
+--    (SELECT id FROM beer_terms.categories WHERE name_en = 'Ingredients'), '{"bittering", "aroma", "preservative"}', 'approved',
+--    (SELECT id FROM beer_terms.users WHERE role = 'admin' LIMIT 1));
+
+-- 创建更新用户统计的函数
+CREATE OR REPLACE FUNCTION beer_terms.update_user_stats()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.status = 'approved' AND OLD.status != 'approved' THEN
+    -- 更新贡献者统计
+    UPDATE beer_terms.users 
+    SET contribution_count = contribution_count + 1,
+        reputation = reputation + 10
+    WHERE id = NEW.created_by;
+    
+    -- 记录活动
+    INSERT INTO beer_terms.user_activities (user_id, activity_type, target_type, target_id, points)
+    VALUES (NEW.created_by, 'create', 'term', NEW.id, 10);
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 创建触发器
+CREATE TRIGGER trigger_update_user_stats
+  AFTER UPDATE OF status ON beer_terms.terms
+  FOR EACH ROW
+  EXECUTE FUNCTION beer_terms.update_user_stats();

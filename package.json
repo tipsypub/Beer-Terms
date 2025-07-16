@@ -1,0 +1,18 @@
+{
+  "name": "beer-terms-supabase-test",
+  "version": "1.0.0",
+  "description": "Supabase connection and CRUD test for beer-terms project",
+  "main": "test-supabase.js",
+  "type": "module",
+  "scripts": {
+    "test": "tsx --env-file=beer-terms-dictionary/.env test/test-supabase.js",
+    "test-schema": "node test/test-schema.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.51.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.3"
+  }
+}
