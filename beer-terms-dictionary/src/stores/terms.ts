@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { TermsService } from '@/services/termsService'
+import { useAuthStore } from './auth' // 导入 auth store
 // import type { Database } from '@/types/supabase' // Temporarily commented out as it cannot be generated.
 
 // Using `any` as a final workaround because `supabase gen types` is not available in this environment.
@@ -20,8 +21,7 @@ export const useTermsStore = defineStore('terms', () => {
   const selectedCategory = ref<string | null>(null)
   const currentPage = ref(1)
   const itemsPerPage = 20
-  // We no longer fetch the total count, so this state is not needed.
-  // const totalTerms = ref(0) 
+  const totalTerms = ref(0)
   
   // This state will track if the last fetch returned a full page of items.
   // If it did, we assume there might be more.
@@ -38,6 +38,14 @@ export const useTermsStore = defineStore('terms', () => {
   // as it only operates on the currently loaded terms.
   // We will rely on fetching from the service directly.
   const filteredTerms = computed(() => terms.value)
+
+  const fetchTotalTermsCount = async () => {
+    try {
+      totalTerms.value = await TermsService.getTotalTermsCount()
+    } catch (err) {
+      console.error('获取术语总数失败:', err)
+    }
+  }
 
   // 方法
   const setLoading = (value: boolean) => {
@@ -215,11 +223,40 @@ export const useTermsStore = defineStore('terms', () => {
     }
   }
 
+  const deleteTerm = async (id: string) => {
+    setLoading(true)
+    setError(null)
+    
+    try {
+      await TermsService.deleteTerm(id)
+      
+      // 从本地状态中移除术语
+      const index = terms.value.findIndex(term => term.id === id)
+      if (index !== -1) {
+        terms.value.splice(index, 1)
+      }
+      
+      // 如果当前查看的是被删除的术语，清空当前术语
+      if (currentTerm.value?.id === id) {
+        currentTerm.value = null
+      }
+      
+      return true
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除术语失败')
+      throw err
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // 初始化
   const init = async () => {
+    // We no longer need to wait for auth, as RLS handles permissions.
     await Promise.all([
       fetchCategories(),
-      fetchTermsPaginated()
+      fetchTermsPaginated(1),
+      fetchTotalTermsCount()
     ])
   }
 
@@ -234,6 +271,7 @@ export const useTermsStore = defineStore('terms', () => {
     selectedCategory,
     currentPage,
     itemsPerPage,
+    totalTerms,
     
     // 计算属性
     filteredTerms,
@@ -251,6 +289,8 @@ export const useTermsStore = defineStore('terms', () => {
     clearFilters,
     addTerm,
     updateTerm,
-    init
+    deleteTerm,
+    init,
+    fetchTotalTermsCount
   }
 })

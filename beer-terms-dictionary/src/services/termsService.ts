@@ -8,8 +8,7 @@ export class TermsService {
     const { data, error } = await supabase
       .from('terms')
       .select('*')
-      .eq('status', 'approved')
-      .order('english_term')
+      .order('created_at', { ascending: false })
 
     if (error) throw error
     return data || []
@@ -22,9 +21,8 @@ export class TermsService {
     const { data, error } = await supabase
       .from('terms')
       .select('*')
-      .eq('status', 'approved')
       .eq('category_id', categoryId)
-      .order('english_term')
+      .order('created_at', { ascending: false })
 
     if (error) throw error
     return data || []
@@ -37,9 +35,8 @@ export class TermsService {
     const { data, error } = await supabase
       .from('terms')
       .select('*')
-      .eq('status', 'approved')
       .or(`english_term.ilike.%${query}%,chinese_term.ilike.%${query}%,chinese_explanation.ilike.%${query}%,english_explanation.ilike.%${query}%`)
-      .order('english_term')
+      .order('created_at', { ascending: false })
 
     if (error) throw error
     return data || []
@@ -102,6 +99,31 @@ export class TermsService {
   }
 
   /**
+   * 删除术语（需要认证）
+   */
+  static async deleteTerm(id: string) {
+    const { error } = await (supabase as any)
+      .from('terms')
+      .delete()
+      .eq('id', id)
+
+    if (error) throw error
+    return true
+  }
+
+  /**
+   * 获取术语总数
+   */
+  static async getTotalTermsCount() {
+    const { count, error } = await supabase
+      .from('terms')
+      .select('*', { count: 'exact', head: true })
+
+    if (error) throw error
+    return count || 0
+  }
+
+  /**
    * 分页获取术语
    */
   static async getTermsPaginated(page: number = 1, limit: number = 20, categoryId?: string) {
@@ -111,8 +133,7 @@ export class TermsService {
     let query = supabase
       .from('terms')
       .select('*')
-      .eq('status', 'approved')
-      .order('english_term')
+      .order('created_at', { ascending: false })
       .range(from, to)
 
     if (categoryId) {
@@ -131,7 +152,6 @@ export class TermsService {
     const { data, error } = await supabase
       .from('terms')
       .select('*')
-      .eq('status', 'approved')
       .ilike('english_term', `${letter}%`)
       .order('english_term')
 
@@ -146,7 +166,6 @@ export class TermsService {
     const { data, error } = await supabase
       .from('terms')
       .select('*')
-      .eq('status', 'approved')
       .order('created_at', { ascending: false })
       .limit(limit)
 

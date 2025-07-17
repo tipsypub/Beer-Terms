@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.51.0",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "tsx": "^4.20.3"
