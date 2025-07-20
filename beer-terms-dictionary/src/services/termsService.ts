@@ -87,6 +87,13 @@ export class TermsService {
    * 更新术语（需要认证）
    */
   static async updateTerm(id: string, updates: any) {
+    // 添加调试信息
+    console.log('UPDATE attempt for ID:', id, 'with updates:', updates)
+    
+    // 检查认证状态
+    const { data: { user } } = await supabase.auth.getUser()
+    console.log('Current user for update:', user)
+    
     const { data, error } = await (supabase as any)
       .from('terms')
       .update(updates)
@@ -94,6 +101,7 @@ export class TermsService {
       .select()
       .single()
 
+    console.log('Update error:', error)
     if (error) throw error
     return data
   }
@@ -102,11 +110,23 @@ export class TermsService {
    * 删除术语（需要认证）
    */
   static async deleteTerm(id: string) {
+    // 添加调试信息
+    console.log('DELETE attempt for ID:', id)
+    
+    // 检查认证状态
+    const { data: { user } } = await supabase.auth.getUser()
+    console.log('Current user for delete:', user)
+    
+    // 检查session
+    const { data: { session } } = await supabase.auth.getSession()
+    console.log('Current session for delete:', session)
+    
     const { error } = await (supabase as any)
       .from('terms')
       .delete()
       .eq('id', id)
 
+    console.log('Delete error:', error)
     if (error) throw error
     return true
   }
