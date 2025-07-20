@@ -89,5 +89,23 @@ export const testBeerTerms = [
     classification_confidence: 0.86,
     context_english: "Stout is a dark beer with roasted malt flavors",
     context_chinese: "世涛是一种具有烘焙麦芽风味的黑啤酒"
+  },
+  {
+    english_term: "Fruit Mead",
+    chinese_term: "水果蜂蜜酒",
+    confidence: 0.93,
+    category_id: "1",
+    classification_confidence: 0.88,
+    context_english: "Fruit mead is honey wine with added fruits",
+    context_chinese: "水果蜂蜜酒是添加了水果的蜂蜜酒"
+  },
+  {
+    english_term: "Melomels",
+    chinese_term: "水果蜂蜜酒", 
+    confidence: 0.91,
+    category_id: "1",
+    classification_confidence: 0.85,
+    context_english: "Melomels are meads made with fruit",
+    context_chinese: "梅洛蜜酒是用水果制作的蜂蜜酒"
   }
 ]

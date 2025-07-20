@@ -372,9 +372,25 @@
               :key="index"
               class="border border-gray-200 rounded-lg p-4"
             >
-              <h4 class="font-semibold text-gray-900 mb-3">
-                重复组 {{ index + 1 }} - {{ group.type === 'exact' ? '精确重复' : group.type === 'fuzzy' ? '相似重复' : '内部重复' }}
-              </h4>
+              <div class="flex items-center justify-between mb-3">
+                <h4 class="font-semibold text-gray-900">
+                  重复组 {{ index + 1 }} - {{ group.type === 'exact' ? '精确重复' : group.type === 'fuzzy' ? '相似重复' : '内部重复' }}
+                </h4>
+                <div class="flex items-center space-x-4">
+                  <label class="flex items-center text-sm">
+                    <input 
+                      type="checkbox" 
+                      v-model="group.allowMultiSelect"
+                      @change="toggleMultiSelect(group, index)"
+                      class="mr-2 h-4 w-4 text-orange-600"
+                    />
+                    允许多选保留
+                  </label>
+                  <span v-if="!group.allowMultiSelect" class="text-xs text-blue-600">
+                    推荐: {{ group.items[group.recommendedIndex]?.english_term }}
+                  </span>
+                </div>
+              </div>
               
               <div class="space-y-3">
                 <div 
@@ -389,11 +405,20 @@
                 >
                   <div class="flex-1">
                     <div class="flex items-center space-x-4">
+                      <!-- 单选模式 -->
                       <input 
+                        v-if="!group.allowMultiSelect"
                         type="radio" 
                         :name="`group_${index}`"
                         :value="itemIndex"
                         v-model="group.selectedIndex"
+                        class="h-4 w-4 text-orange-600 focus:ring-orange-500"
+                      />
+                      <!-- 多选模式 -->
+                      <input 
+                        v-else
+                        type="checkbox" 
+                        v-model="item.selected"
                         class="h-4 w-4 text-orange-600 focus:ring-orange-500"
                       />
                       <div class="flex-1">
@@ -422,10 +447,19 @@
                   </div>
                   <div class="ml-4">
                     <button
-                      @click="item.selected = group.selectedIndex === itemIndex"
+                      v-if="!group.allowMultiSelect"
+                      @click="group.selectedIndex = itemIndex"
                       class="text-xs text-blue-600 hover:text-blue-800"
                     >
                       选择此项
+                    </button>
+                    <button
+                      v-else
+                      @click="item.selected = !item.selected"
+                      class="text-xs"
+                      :class="item.selected ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'"
+                    >
+                      {{ item.selected ? '取消选择' : '选择此项' }}
                     </button>
                   </div>
                 </div>
@@ -503,6 +537,8 @@ interface DuplicateGroup {
   type: 'exact' | 'fuzzy' | 'internal'
   items: DuplicateItem[]
   selectedIndex: number
+  allowMultiSelect: boolean // 是否允许多选
+  recommendedIndex: number // 推荐的单选项
 }
 
 interface DuplicateItem {
@@ -816,10 +852,15 @@ const findInternalDuplicates = (terms: TermWithSelection[]): DuplicateGroup[] =>
     }
     
     if (duplicates.length > 1) {
+      // 判断是否应该允许多选：英文不同但中文相同的情况
+      const allowMultiSelect = shouldAllowMultiSelect(duplicates)
+      
       groups.push({
         type: 'internal',
         items: duplicates,
-        selectedIndex: 0 // 默认选择第一个
+        selectedIndex: 0,
+        allowMultiSelect,
+        recommendedIndex: getRecommendedIndex(duplicates)
       })
       processed.add(i)
     }
@@ -880,10 +921,14 @@ const findDatabaseDuplicates = async (terms: TermWithSelection[], TermsService: 
           })
         })
         
+        const allowMultiSelect = shouldAllowMultiSelect(duplicateItems)
+        
         groups.push({
           type: exactDuplicates.length > 0 ? 'exact' : 'fuzzy',
           items: duplicateItems,
-          selectedIndex: 1 // 默认选择数据库中的术语
+          selectedIndex: 1, // 默认选择数据库中的术语
+          allowMultiSelect,
+          recommendedIndex: getRecommendedIndex(duplicateItems)
         })
       }
     } catch (error) {
@@ -940,6 +985,70 @@ const calculateStringSimilarity = (str1: string, str2: string): number => {
   return (maxLength - matrix[str2.length][str1.length]) / maxLength
 }
 
+// 判断是否应该允许多选
+const shouldAllowMultiSelect = (items: DuplicateItem[]): boolean => {
+  // 如果只有一项，不需要多选
+  if (items.length <= 1) return false
+  
+  // 检查是否存在英文不同但中文相同的情况
+  const chineseTerms = new Set<string>()
+  const englishTerms = new Set<string>()
+  
+  items.forEach(item => {
+    chineseTerms.add(item.chinese_term.toLowerCase().trim())
+    englishTerms.add(item.english_term.toLowerCase().trim())
+  })
+  
+  // 如果中文术语相同但英文术语不同，建议允许多选
+  const sameChinese = chineseTerms.size === 1
+  const differentEnglish = englishTerms.size > 1
+  
+  return sameChinese && differentEnglish
+}
+
+// 获取推荐的索引
+const getRecommendedIndex = (items: DuplicateItem[]): number => {
+  if (items.length === 0) return 0
+  
+  // 优先推荐数据库中的术语
+  const dbItemIndex = items.findIndex(item => item.isFromDatabase)
+  if (dbItemIndex !== -1) return dbItemIndex
+  
+  // 其次推荐置信度最高的术语
+  let maxConfidence = 0
+  let maxIndex = 0
+  
+  items.forEach((item, index) => {
+    if (item.confidence && item.confidence > maxConfidence) {
+      maxConfidence = item.confidence
+      maxIndex = index
+    }
+  })
+  
+  return maxIndex
+}
+
+// 切换多选模式
+const toggleMultiSelect = (group: DuplicateGroup, groupIndex: number) => {
+  if (group.allowMultiSelect) {
+    // 切换到多选模式时，初始化选择状态
+    group.items.forEach((item, index) => {
+      if (index === group.recommendedIndex) {
+        item.selected = true
+      } else if (!item.isFromDatabase) {
+        // 默认选择当前导入的术语
+        item.selected = true
+      }
+    })
+  } else {
+    // 切换到单选模式时，清除多选状态
+    group.items.forEach(item => {
+      item.selected = false
+    })
+    group.selectedIndex = group.recommendedIndex
+  }
+}
+
 // 更新术语重复状态
 const updateTermDuplicateStatus = () => {
   // 重置所有术语的重复状态
@@ -964,26 +1073,52 @@ const updateTermDuplicateStatus = () => {
 const applyDuplicateResolution = () => {
   // 根据用户选择更新术语状态
   duplicateGroups.value.forEach(group => {
-    const selectedItem = group.items[group.selectedIndex]
-    
-    group.items.forEach((item, index) => {
-      if (!item.isFromDatabase && typeof item.originalIndex === 'number') {
-        const term = termsWithSelection.value[item.originalIndex]
-        if (term) {
-          // 如果选择的是数据库中的术语，则取消选择当前导入的术语
-          if (selectedItem.isFromDatabase) {
-            term.selected = false
-          } else {
-            // 如果选择的是当前导入的术语，只保留选中的那个
-            term.selected = index === group.selectedIndex
+    if (group.allowMultiSelect) {
+      // 多选模式：根据checkbox状态更新
+      group.items.forEach(item => {
+        if (!item.isFromDatabase && typeof item.originalIndex === 'number') {
+          const term = termsWithSelection.value[item.originalIndex]
+          if (term) {
+            term.selected = item.selected
           }
         }
-      }
-    })
+      })
+    } else {
+      // 单选模式：只保留选中的一个
+      const selectedItem = group.items[group.selectedIndex]
+      
+      group.items.forEach((item, index) => {
+        if (!item.isFromDatabase && typeof item.originalIndex === 'number') {
+          const term = termsWithSelection.value[item.originalIndex]
+          if (term) {
+            // 如果选择的是数据库中的术语，则取消选择当前导入的术语
+            if (selectedItem.isFromDatabase) {
+              term.selected = false
+            } else {
+              // 如果选择的是当前导入的术语，只保留选中的那个
+              term.selected = index === group.selectedIndex
+            }
+          }
+        }
+      })
+    }
   })
   
   showDuplicateModal.value = false
-  alert('重复项处理完成！已根据您的选择更新术语状态。')
+  
+  // 统计处理结果
+  const multiSelectGroups = duplicateGroups.value.filter(g => g.allowMultiSelect).length
+  const singleSelectGroups = duplicateGroups.value.filter(g => !g.allowMultiSelect).length
+  
+  let message = '重复项处理完成！'
+  if (multiSelectGroups > 0) {
+    message += `\n${multiSelectGroups} 个多选组已根据您的选择保留术语。`
+  }
+  if (singleSelectGroups > 0) {
+    message += `\n${singleSelectGroups} 个单选组已保留推荐术语。`
+  }
+  
+  alert(message)
 }
 
 const confirmImport = async () => {
