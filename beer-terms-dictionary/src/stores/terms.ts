@@ -186,11 +186,17 @@ export const useTermsStore = defineStore('terms', () => {
     setError(null)
     
     try {
-      const newTerm = await TermsService.addTerm(term as TermInsert)
-      if (newTerm) {
-        terms.value.unshift(newTerm)
+      const result = await TermsService.addTerm(term as TermInsert)
+      if (result) {
+        if (Array.isArray(result)) {
+          // 批量添加：将所有新术语添加到列表开头
+          terms.value.unshift(...result)
+        } else {
+          // 单个添加：将新术语添加到列表开头
+          terms.value.unshift(result)
+        }
       }
-      return newTerm
+      return result
     } catch (err) {
       setError(err instanceof Error ? err.message : '添加术语失败')
       throw err

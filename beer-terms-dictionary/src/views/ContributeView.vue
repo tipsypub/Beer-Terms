@@ -15,12 +15,30 @@
         <div class="space-y-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">英文术语 *</label>
-            <input v-model="singleTerm.english_term" type="text" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500" />
+            <input 
+              v-model="singleTerm.english_term" 
+              @input="handleTermInput"
+              type="text" 
+              required 
+              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500" 
+            />
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">中文术语 *</label>
-            <input v-model="singleTerm.chinese_term" type="text" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500" />
+            <input 
+              v-model="singleTerm.chinese_term" 
+              @input="handleTermInput"
+              type="text" 
+              required 
+              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500" 
+            />
           </div>
+          <!-- 查重结果展示 -->
+          <DuplicateChecker 
+            :duplicate-results="duplicateCheckResult" 
+            :checking="duplicateChecking"
+            :show-no-results-message="showNoDuplicatesMessage"
+          />
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">分类 *</label>
             <select v-model="singleTerm.category_id" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500">
@@ -42,15 +60,78 @@
     <!-- 批量导入 -->
     <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
       <h2 class="text-xl font-semibold mb-4">批量导入</h2>
-      <div class="flex items-center space-x-4">
-        <input type="file" @change="handleFileUpload" accept=".xlsx, .xls" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100"/>
-        <button @click="handleBulkSubmit" :disabled="bulkTerms.length === 0 || loading" class="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 whitespace-nowrap">
-          {{ loading ? '导入中...' : `导入 ${bulkTerms.length} 条` }}
-        </button>
+      <div class="space-y-4">
+        <!-- 文件选择 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">选择Excel文件</label>
+          <div class="flex items-center space-x-4">
+            <input 
+              type="file" 
+              @change="handleFileUpload" 
+              accept=".xlsx, .xls" 
+              class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100"
+            />
+          </div>
+          <p class="text-xs text-gray-500 mt-1">
+            支持 .xlsx 和 .xls 格式，文件应包含：英文术语、中文术语、分类三列
+          </p>
+        </div>
+
+        <!-- 处理状态和结果 -->
+        <div v-if="processing" class="flex items-center space-x-3 p-4 bg-blue-50 rounded-lg">
+          <i class="ri-loader-line animate-spin text-blue-500"></i>
+          <span class="text-blue-700">正在处理文件并检查重复...</span>
+        </div>
+
+        <div v-if="error" class="p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div class="flex items-center">
+            <i class="ri-error-warning-line text-red-500 mr-2"></i>
+            <span class="text-red-700 font-medium">处理失败</span>
+          </div>
+          <p class="text-red-600 text-sm mt-1">{{ error }}</p>
+        </div>
+
+        <div v-if="successMessage" class="p-4 bg-green-50 border border-green-200 rounded-lg">
+          <div class="flex items-center">
+            <i class="ri-checkbox-circle-line text-green-500 mr-2"></i>
+            <span class="text-green-700 font-medium">导入成功</span>
+          </div>
+          <p class="text-green-600 text-sm mt-1">{{ successMessage }}</p>
+        </div>
+
+        <!-- 文件处理完成后的预览按钮 -->
+        <div v-if="bulkTerms.length > 0 && !processing" class="p-4 bg-orange-50 border border-orange-200 rounded-lg">
+          <div class="flex items-center justify-between">
+            <div>
+              <h4 class="font-medium text-orange-900">文件处理完成</h4>
+              <p class="text-sm text-orange-700 mt-1">
+                共解析 {{ bulkTerms.length }} 条记录，其中 {{ duplicateCount }} 条存在重复或相似项
+              </p>
+              <div class="flex space-x-4 mt-2 text-xs">
+                <span class="text-green-600">✓ {{ noDuplicatesCount }} 无重复</span>
+                <span class="text-red-600">⚠ {{ exactDuplicatesCount }} 精确重复</span>
+                <span class="text-yellow-600">~ {{ fuzzyDuplicatesCount }} 相似</span>
+              </div>
+            </div>
+            <button 
+              @click="showBulkImportModal = true"
+              class="px-6 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            >
+              预览和选择导入
+            </button>
+          </div>
+        </div>
       </div>
-      <p v-if="error" class="text-red-500 text-sm mt-2">{{ error }}</p>
-      <p v-if="successMessage" class="text-green-600 text-sm mt-2">{{ successMessage }}</p>
     </div>
+
+    <!-- 批量导入预览模态框 -->
+    <BulkImportModal
+      v-model="showBulkImportModal"
+      :bulk-terms="bulkTerms"
+      :categories="categories"
+      :loading="loading"
+      @confirm-import="handleBulkImport"
+    />
   </div>
 </template>
 
@@ -59,10 +140,11 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import * as XLSX from 'xlsx'
 import { useTermsStore } from '@/stores/terms'
-import { useAuthStore } from '@/stores/auth'
+import { TermsService } from '@/services/termsService'
+import DuplicateChecker from '@/components/terms/DuplicateChecker.vue'
+import BulkImportModal from '@/components/terms/BulkImportModal.vue'
 
 const termsStore = useTermsStore()
-const authStore = useAuthStore()
 const router = useRouter()
 
 const goBack = () => {
@@ -77,10 +159,24 @@ const singleTerm = ref({
 
 const bulkTerms = ref<any[]>([])
 const loading = ref(false)
+const processing = ref(false)
 const error = ref<string | null>(null)
 const successMessage = ref<string | null>(null)
+const showBulkImportModal = ref(false)
+
+// 查重相关状态
+const duplicateChecking = ref(false)
+const duplicateCheckResult = ref<any>(null)
+const showNoDuplicatesMessage = ref(false)
+let duplicateCheckTimeout: any = null
 
 const categories = computed(() => termsStore.categories)
+
+// 批量导入统计计算属性
+const duplicateCount = computed(() => bulkTerms.value.filter(term => term.hasDuplicates).length)
+const noDuplicatesCount = computed(() => bulkTerms.value.filter(term => !term.hasDuplicates).length)
+const exactDuplicatesCount = computed(() => bulkTerms.value.filter(term => term.duplicateResult?.exactDuplicates?.length > 0).length)
+const fuzzyDuplicatesCount = computed(() => bulkTerms.value.filter(term => term.duplicateResult?.fuzzyDuplicates?.length > 0 && !term.duplicateResult?.exactDuplicates?.length).length)
 
 onMounted(() => {
   if (categories.value.length === 0) {
@@ -88,17 +184,100 @@ onMounted(() => {
   }
 })
 
+// 防抖处理的查重检查
+const handleTermInput = () => {
+  // 清空之前的结果
+  duplicateCheckResult.value = null
+  showNoDuplicatesMessage.value = false
+  
+  // 清除之前的定时器
+  if (duplicateCheckTimeout) {
+    clearTimeout(duplicateCheckTimeout)
+  }
+  
+  // 如果输入为空，不进行检查
+  if (!singleTerm.value.english_term.trim() && !singleTerm.value.chinese_term.trim()) {
+    return
+  }
+  
+  // 设置新的定时器，延迟500ms后执行检查
+  duplicateCheckTimeout = setTimeout(checkDuplicates, 500)
+}
+
+// 执行查重检查
+const checkDuplicates = async () => {
+  if (!singleTerm.value.english_term.trim() || !singleTerm.value.chinese_term.trim()) {
+    return
+  }
+  
+  try {
+    duplicateChecking.value = true
+    duplicateCheckResult.value = null
+    
+    const exactDuplicates = await TermsService.checkExactDuplicate(
+      singleTerm.value.english_term.trim(), 
+      singleTerm.value.chinese_term.trim()
+    )
+    
+    let fuzzyDuplicates: any[] = []
+    if (exactDuplicates.length === 0) {
+      fuzzyDuplicates = await TermsService.checkFuzzyDuplicate(
+        singleTerm.value.english_term.trim(), 
+        singleTerm.value.chinese_term.trim(), 
+        0.85
+      )
+    }
+    
+    duplicateCheckResult.value = {
+      exactDuplicates,
+      fuzzyDuplicates
+    }
+    
+    // 如果没有找到重复，显示成功消息
+    if (exactDuplicates.length === 0 && fuzzyDuplicates.length === 0) {
+      showNoDuplicatesMessage.value = true
+      setTimeout(() => {
+        showNoDuplicatesMessage.value = false
+      }, 3000)
+    }
+    
+  } catch (error) {
+    console.error('查重检查失败:', error)
+  } finally {
+    duplicateChecking.value = false
+  }
+}
+
 const handleSingleSubmit = async () => {
   loading.value = true
   error.value = null
   successMessage.value = null
+  
   try {
+    // 提交前最终检查重复
+    const exactDuplicates = await TermsService.checkExactDuplicate(
+      singleTerm.value.english_term.trim(), 
+      singleTerm.value.chinese_term.trim()
+    )
+    
+    // 如果发现精确重复，要求用户确认
+    if (exactDuplicates.length > 0) {
+      const confirmMessage = `发现以下重复词条：\n${exactDuplicates.map(d => `${d.english_term} / ${d.chinese_term}`).join('\n')}\n\n确定要继续添加吗？`
+      if (!confirm(confirmMessage)) {
+        loading.value = false
+        return
+      }
+    }
+    
     await termsStore.addTerm({
       ...singleTerm.value,
       status: 'approved'
     })
+    
     successMessage.value = '术语添加成功！'
     singleTerm.value = { english_term: '', chinese_term: '', category_id: '' }
+    duplicateCheckResult.value = null
+    showNoDuplicatesMessage.value = false
     await termsStore.fetchTotalTermsCount() // 更新总数
   } catch (err: any) {
     error.value = err.message || '添加失败'
@@ -127,47 +306,83 @@ const handleFileUpload = (event: Event) => {
   reader.readAsArrayBuffer(file)
 }
 
-const processExcelData = (data: string[][]) => {
+const processExcelData = async (data: string[][]) => {
   error.value = null
-  const termsToImport: any[] = []
-  const categoryMap = new Map(categories.value.map(c => [c.name_zh, c.id]))
+  successMessage.value = null
+  processing.value = true
+  
+  try {
+    const termsToImport: any[] = []
+    const categoryMap = new Map(categories.value.map(c => [c.name_zh, c.id]))
 
-  // Skip header row if it exists
-  const startRow = (data[0] && (data[0][0]?.toLowerCase().includes('english') || data[0][2]?.toLowerCase().includes('category'))) ? 1 : 0;
+    // Skip header row if it exists
+    const startRow = (data[0] && (data[0][0]?.toLowerCase().includes('english') || data[0][2]?.toLowerCase().includes('category'))) ? 1 : 0;
 
-  for (let i = startRow; i < data.length; i++) {
-    const row = data[i]
-    if (row && row[0] && row[1] && row[2]) {
-      const categoryId = categoryMap.get(row[2].trim())
-      if (!categoryId) {
-        error.value = `第 ${i + 1} 行的分类 "${row[2]}" 不存在。请检查分类名称。`
-        bulkTerms.value = []
-        return
+    for (let i = startRow; i < data.length; i++) {
+      const row = data[i]
+      if (row && row[0] && row[1] && row[2]) {
+        const categoryId = categoryMap.get(row[2].trim())
+        if (!categoryId) {
+          error.value = `第 ${i + 1} 行的分类 "${row[2]}" 不存在。请检查分类名称。`
+          bulkTerms.value = []
+          return
+        }
+        termsToImport.push({
+          english_term: row[0].trim(),
+          chinese_term: row[1].trim(),
+          category_id: categoryId,
+          status: 'approved',
+          rowIndex: i + 1
+        })
       }
-      termsToImport.push({
-        english_term: row[0].trim(),
-        chinese_term: row[1].trim(),
-        category_id: categoryId,
-        status: 'approved'
-      })
     }
+    
+    // 进行批量查重检查
+    console.log('开始批量查重检查...')
+    const duplicateResults = await TermsService.checkBatchDuplicates(termsToImport)
+    
+    // 为每个term添加查重结果和选择状态
+    const processedTerms = termsToImport.map((term, index) => ({
+      ...term,
+      duplicateResult: duplicateResults[index],
+      hasDuplicates: duplicateResults[index]?.hasDuplicates || false,
+      selected: !duplicateResults[index]?.hasDuplicates // 默认选择无重复的项目
+    }))
+    
+    bulkTerms.value = processedTerms
+    
+  } catch (err: any) {
+    error.value = err.message || '文件处理失败'
+    console.error('批量查重失败:', err)
+    bulkTerms.value = []
+  } finally {
+    processing.value = false
   }
-  bulkTerms.value = termsToImport
 }
 
-const handleBulkSubmit = async () => {
-  if (bulkTerms.value.length === 0) return
+// 模态框确认导入方法
+const handleBulkImport = async (selectedTerms: any[]) => {
+  if (selectedTerms.length === 0) return
 
   loading.value = true
   error.value = null
   successMessage.value = null
 
   try {
-    // Supabase's insert can take an array of objects for bulk insertion
-    await termsStore.addTerm(bulkTerms.value)
+    // 清理掉不需要的属性
+    const termsToSubmit = selectedTerms.map(term => ({
+      english_term: term.english_term,
+      chinese_term: term.chinese_term,
+      category_id: term.category_id,
+      status: term.status
+    }))
     
-    successMessage.value = `成功导入 ${bulkTerms.value.length} 条术语！`
+    // Supabase's insert can take an array of objects for bulk insertion
+    await termsStore.addTerm(termsToSubmit)
+    
+    successMessage.value = `成功导入 ${selectedTerms.length} 条术语！`
     bulkTerms.value = []
+    showBulkImportModal.value = false
     await termsStore.fetchTotalTermsCount() // 更新总数
   } catch (err: any) {
     error.value = err.message || '批量导入失败'
@@ -175,4 +390,5 @@ const handleBulkSubmit = async () => {
     loading.value = false
   }
 }
+
 </script>

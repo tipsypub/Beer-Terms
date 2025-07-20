@@ -77,10 +77,11 @@ export class TermsService {
       .from('terms')
       .insert(term)
       .select()
-      .single()
 
     if (error) throw error
-    return data
+    
+    // 如果是单个术语，返回第一个；如果是数组，返回整个数组
+    return Array.isArray(term) ? data : data?.[0]
   }
 
   /**
@@ -171,5 +172,104 @@ export class TermsService {
 
     if (error) throw error
     return data || []
+  }
+
+  /**
+   * 检查词条重复 - 精确匹配
+   */
+  static async checkExactDuplicate(englishTerm: string, chineseTerm: string) {
+    const { data, error } = await supabase
+      .from('terms')
+      .select('id, english_term, chinese_term, category_id')
+      .or(`english_term.eq.${englishTerm},chinese_term.eq.${chineseTerm}`)
+
+    if (error) throw error
+    return data || []
+  }
+
+  /**
+   * 检查词条重复 - 模糊匹配
+   */
+  static async checkFuzzyDuplicate(englishTerm: string, chineseTerm: string, threshold: number = 0.8) {
+    // 标准化处理：去除空格、标点，转小写
+    const normalizeText = (text: string) => {
+      return text.toLowerCase().replace(/[\s\-_.()]/g, '')
+    }
+
+    const normalizedEnglish = normalizeText(englishTerm)
+    const normalizedChinese = normalizeText(chineseTerm)
+
+    // 获取所有词条进行客户端相似度计算
+    const { data, error } = await supabase
+      .from('terms')
+      .select('id, english_term, chinese_term, category_id')
+
+    if (error) throw error
+    if (!data) return []
+
+    // 计算相似度
+    const similarTerms = data.filter(term => {
+      const termEnglishNorm = normalizeText(term.english_term)
+      const termChineseNorm = normalizeText(term.chinese_term)
+      
+      const englishSimilarity = this.calculateSimilarity(normalizedEnglish, termEnglishNorm)
+      const chineseSimilarity = this.calculateSimilarity(normalizedChinese, termChineseNorm)
+      
+      return englishSimilarity >= threshold || chineseSimilarity >= threshold
+    })
+
+    return similarTerms.map(term => ({
+      ...term,
+      englishSimilarity: this.calculateSimilarity(normalizedEnglish, normalizeText(term.english_term)),
+      chineseSimilarity: this.calculateSimilarity(normalizedChinese, normalizeText(term.chinese_term))
+    }))
+  }
+
+  /**
+   * 计算两个字符串的相似度（简单的编辑距离算法）
+   */
+  static calculateSimilarity(str1: string, str2: string): number {
+    if (str1 === str2) return 1.0
+    if (str1.length === 0 || str2.length === 0) return 0.0
+
+    const matrix = Array(str2.length + 1).fill(null).map(() => Array(str1.length + 1).fill(null))
+
+    for (let i = 0; i <= str1.length; i++) matrix[0][i] = i
+    for (let j = 0; j <= str2.length; j++) matrix[j][0] = j
+
+    for (let j = 1; j <= str2.length; j++) {
+      for (let i = 1; i <= str1.length; i++) {
+        const indicator = str1[i - 1] === str2[j - 1] ? 0 : 1
+        matrix[j][i] = Math.min(
+          matrix[j][i - 1] + 1,     // deletion
+          matrix[j - 1][i] + 1,     // insertion
+          matrix[j - 1][i - 1] + indicator // substitution
+        )
+      }
+    }
+
+    const maxLength = Math.max(str1.length, str2.length)
+    return (maxLength - matrix[str2.length][str1.length]) / maxLength
+  }
+
+  /**
+   * 批量检查词条重复
+   */
+  static async checkBatchDuplicates(terms: Array<{english_term: string, chinese_term: string}>) {
+    const results = []
+    
+    for (const term of terms) {
+      const exactDuplicates = await this.checkExactDuplicate(term.english_term, term.chinese_term)
+      const fuzzyDuplicates = await this.checkFuzzyDuplicate(term.english_term, term.chinese_term, 0.85)
+      
+      results.push({
+        term,
+        exactDuplicates,
+        fuzzyDuplicates,
+        hasDuplicates: exactDuplicates.length > 0 || fuzzyDuplicates.length > 0
+      })
+    }
+    
+    return results
   }
 }
