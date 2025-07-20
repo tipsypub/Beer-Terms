@@ -156,20 +156,92 @@ class AIService {
   async classifyTerms(
     terms: ExtractedTerm[], 
     provider: AIProvider = 'gemini',
-    categories: any[] = []
+    categories: any[] = [],
+    onProgress?: (current: number, total: number) => void
   ): Promise<ClassifiedTerm[]> {
-    const prompt = this.createClassificationPrompt(terms, categories)
+    // 如果术语数量超过阈值，使用分批处理
+    const CLASSIFICATION_BATCH_SIZE = 20 // 每批最多20个术语
     
-    try {
-      if (provider === 'gemini') {
-        return await this.classifyWithGemini(terms, prompt, categories)
-      } else {
-        return await this.classifyWithKimi(terms, prompt, categories)
+    if (terms.length <= CLASSIFICATION_BATCH_SIZE) {
+      // 小批量，直接处理
+      const prompt = this.createClassificationPrompt(terms, categories)
+      
+      try {
+        if (provider === 'gemini') {
+          return await this.classifyWithGemini(terms, prompt, categories)
+        } else {
+          return await this.classifyWithKimi(terms, prompt, categories)
+        }
+      } catch (error) {
+        console.error(`${provider} 术语分类失败:`, error)
+        throw new Error(`AI术语分类失败: ${error}`)
       }
-    } catch (error) {
-      console.error(`${provider} 术语分类失败:`, error)
-      throw new Error(`AI术语分类失败: ${error}`)
+    } else {
+      // 大批量，分批处理
+      return await this.classifyTermsInBatches(terms, provider, categories, CLASSIFICATION_BATCH_SIZE, onProgress)
     }
+  }
+
+  /**
+   * 分批处理术语分类
+   */
+  private async classifyTermsInBatches(
+    terms: ExtractedTerm[],
+    provider: AIProvider,
+    categories: any[],
+    batchSize: number,
+    onProgress?: (current: number, total: number) => void
+  ): Promise<ClassifiedTerm[]> {
+    const allClassifiedTerms: ClassifiedTerm[] = []
+    const totalBatches = Math.ceil(terms.length / batchSize)
+    
+    console.log(`开始分批分类，共${terms.length}个术语，分${totalBatches}批处理`)
+    
+    for (let i = 0; i < totalBatches; i++) {
+      const startIndex = i * batchSize
+      const endIndex = Math.min(startIndex + batchSize, terms.length)
+      const batch = terms.slice(startIndex, endIndex)
+      
+      console.log(`处理第${i + 1}/${totalBatches}批，术语${startIndex + 1}-${endIndex}`)
+      
+      try {
+        const prompt = this.createClassificationPrompt(batch, categories)
+        let batchResults: ClassifiedTerm[]
+        
+        if (provider === 'gemini') {
+          batchResults = await this.classifyWithGemini(batch, prompt, categories)
+        } else {
+          batchResults = await this.classifyWithKimi(batch, prompt, categories)
+        }
+        
+        allClassifiedTerms.push(...batchResults)
+        
+        // 报告进度
+        onProgress?.(endIndex, terms.length)
+        
+        // 批次间稍微延迟，避免API限流
+        if (i < totalBatches - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000))
+        }
+        
+      } catch (error) {
+        console.error(`第${i + 1}批分类失败:`, error)
+        
+        // 对于失败的批次，使用默认分类
+        const fallbackResults: ClassifiedTerm[] = batch.map(term => ({
+          ...term,
+          category_id: '20', // 默认为"其他"分类
+          category_name: '其他',
+          classification_confidence: 0.1
+        }))
+        
+        allClassifiedTerms.push(...fallbackResults)
+        onProgress?.(endIndex, terms.length)
+      }
+    }
+    
+    console.log(`分批分类完成，共处理${allClassifiedTerms.length}个术语`)
+    return allClassifiedTerms
   }
 
   private createExtractionPrompt(englishText: string, chineseText: string): string {

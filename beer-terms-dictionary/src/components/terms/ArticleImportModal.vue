@@ -696,7 +696,11 @@ const startSimpleAIAnalysis = async (englishContent: string, chineseContent: str
   const classifiedTerms = await aiService.classifyTerms(
     terms,
     selectedAIProvider.value,
-    props.categories
+    props.categories,
+    (current: number, total: number) => {
+      const progress = (current / total) * 100
+      updateProgress('classify', progress, `已分类 ${current}/${total} 个术语`)
+    }
   )
 
   completeStep('classify')
@@ -787,7 +791,11 @@ const handleChunkedExtractionComplete = async (terms: ExtractedTerm[]) => {
     const classifiedTerms = await aiService.classifyTerms(
       terms,
       selectedAIProvider.value,
-      props.categories
+      props.categories,
+      (current: number, total: number) => {
+        const progress = (current / total) * 100
+        updateProgress('classify', progress, `已分类 ${current}/${total} 个术语`)
+      }
     )
 
     completeStep('classify')
