@@ -99,7 +99,10 @@ import { ref, watch, computed } from 'vue'
 import { useTermsStore } from '@/stores/terms'
 import { TermsService } from '@/services/termsService'
 
-const props = defineProps<{ modelValue: boolean }>()
+const props = defineProps<{ 
+  modelValue: boolean
+  selectedTerm?: any
+}>()
 const emit = defineEmits(['update:modelValue'])
 
 const termsStore = useTermsStore()
@@ -121,6 +124,13 @@ watch(searchTerm, (newVal) => {
     searchResults.value = []
   }
 })
+
+// 监听props.selectedTerm变化，自动选择该term
+watch(() => props.selectedTerm, (newTerm) => {
+  if (newTerm && props.modelValue) {
+    selectTerm(newTerm)
+  }
+}, { immediate: true })
 
 const searchTerms = async () => {
   if (searchTerm.value.length < 2) {
@@ -181,5 +191,6 @@ const closeModal = () => {
   emit('update:modelValue', false)
   selectedTerm.value = null
   searchTerm.value = ''
+  searchResults.value = []
 }
 </script>

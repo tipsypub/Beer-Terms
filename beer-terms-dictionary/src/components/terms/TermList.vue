@@ -5,13 +5,22 @@
         <div
           v-for="term in filteredTerms"
           :key="term.id"
-          class="p-4 hover:bg-gray-50 transition-colors cursor-pointer"
-          @click="goToTermDetail(term.id)"
+          :class="[
+            'p-4 transition-colors',
+            isAuthenticated 
+              ? 'hover:bg-gray-50 cursor-pointer' 
+              : 'cursor-default'
+          ]"
+          @click="handleTermClick(term)"
         >
           <div class="flex items-start justify-between">
-            <div>
+            <div class="flex-1">
               <h3 class="text-lg font-semibold text-gray-900">{{ term.english_term }}</h3>
               <h4 class="text-orange-500 font-medium mt-1">{{ term.chinese_term }}</h4>
+            </div>
+            <!-- 登录用户显示编辑提示 -->
+            <div v-if="isAuthenticated" class="text-sm text-gray-400">
+              点击编辑
             </div>
             <!-- View button removed as the whole card is clickable -->
           </div>
@@ -45,12 +54,12 @@
 
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useTermsStore } from '@/stores/terms'
+import { useAuthStore } from '@/stores/auth'
 
 const termsStore = useTermsStore()
-const router = useRouter()
+const authStore = useAuthStore()
 
 // Use storeToRefs to keep reactivity
 const { 
@@ -59,8 +68,19 @@ const {
   loading
 } = storeToRefs(termsStore)
 
-const goToTermDetail = (id: string) => {
-  router.push(`/term/${id}`)
+const isAuthenticated = computed(() => authStore.isAuthenticated)
+
+const handleTermClick = (term: any) => {
+  if (!isAuthenticated.value) {
+    // 未登录用户点击无反应
+    return
+  }
+  
+  // 登录用户触发编辑模态框
+  // 使用全局事件来打开编辑模态框
+  window.dispatchEvent(new CustomEvent('open-edit-modal', { 
+    detail: { term } 
+  }))
 }
 
 onMounted(() => {
