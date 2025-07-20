@@ -523,8 +523,8 @@ const updateGeminiConfig = () => {
 }
 
 const useTestKey = () => {
-  // 使用更新的API Key
-  apiKey.value = 'AIzaSyAfSjXMyid7D2ddCxpirwicLwJOIjxLjEQ'
+  // Please set your own API key
+  apiKey.value = ''
   saveSettings()
   updateGeminiConfig()
 }

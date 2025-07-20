@@ -91,8 +91,8 @@ class AIService {
 
   constructor() {
     this.config = {
-      geminiApiKey: import.meta.env.VITE_GEMINI_API_KEY || 'AIzaSyCXVeAS0dFqYMjGDRBqRgewJU70zQu7Oa4',
-      kimiApiKey: import.meta.env.VITE_KIMI_API_KEY || 'sk-tGf3nDkiVxPEigWriinQ0oCuPHCXX61ZqxYObExQDZGPyEBx'
+      geminiApiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
+      kimiApiKey: import.meta.env.VITE_KIMI_API_KEY || ''
     }
     
     this.initializeClients()

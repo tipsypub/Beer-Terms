@@ -2,7 +2,7 @@ Gemini API
 
 import { GoogleGenAI } from "@google/genai";
 
-// The client gets the API key from the environment variable `AIzaSyCXVeAS0dFqYMjGDRBqRgewJU70zQu7Oa4`.
+// The client gets the API key from the environment variable.
 const ai = new GoogleGenAI({});
 
 async function main() {
@@ -19,7 +19,7 @@ main();
 kimi API
 
 # Kimi API密钥配置
-KIMI_API_KEY=sk-tGf3nDkiVxPEigWriinQ0oCuPHCXX61ZqxYObExQDZGPyEBx
+KIMI_API_KEY=your_kimi_api_key_here
 
 调用示例：
 

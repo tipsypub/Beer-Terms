@@ -21,6 +21,7 @@ dist/
 */dist/
 build/
 */build/
+sec/
 
 # OS generated files
 .DS_Store
@@ -42,3 +43,10 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
+
+# Security - API Keys and Secrets
+**/AIzaSy*
+**/sk-*
+**/*api*key*
+**/*secret*
+**/*token*
