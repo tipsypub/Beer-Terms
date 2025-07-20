@@ -57,10 +57,15 @@
       </form>
     </div>
 
-    <!-- 批量导入 -->
-    <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-      <h2 class="text-xl font-semibold mb-4">批量导入</h2>
-      <div class="space-y-4">
+    <!-- 批量导入选项 -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+      <!-- Excel批量导入 -->
+      <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+        <div class="flex items-center mb-4">
+          <i class="ri-file-excel-line text-2xl text-green-600 mr-3"></i>
+          <h2 class="text-xl font-semibold">Excel批量导入</h2>
+        </div>
+        <div class="space-y-4">
         <!-- 文件选择 -->
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-2">选择Excel文件</label>
@@ -121,6 +126,43 @@
             </button>
           </div>
         </div>
+        </div>
+      </div>
+      
+      <!-- AI文章识别导入 -->
+      <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+        <div class="flex items-center mb-4">
+          <i class="ri-robot-line text-2xl text-purple-600 mr-3"></i>
+          <h2 class="text-xl font-semibold">AI文章识别导入</h2>
+        </div>
+        <div class="space-y-4">
+          <p class="text-sm text-gray-600">
+            上传英文原文和中文翻译，AI将自动识别啤酒术语并智能分类
+          </p>
+          
+          <div class="space-y-3">
+            <div class="flex items-center text-xs text-gray-500">
+              <i class="ri-check-line text-green-500 mr-2"></i>
+              <span>支持PDF、Word、Markdown、HTML格式</span>
+            </div>
+            <div class="flex items-center text-xs text-gray-500">
+              <i class="ri-check-line text-green-500 mr-2"></i>
+              <span>智能术语提取和自动分类</span>
+            </div>
+            <div class="flex items-center text-xs text-gray-500">
+              <i class="ri-check-line text-green-500 mr-2"></i>
+              <span>支持Gemini和Kimi双AI引擎</span>
+            </div>
+          </div>
+          
+          <button 
+            @click="showArticleImportModal = true"
+            class="w-full px-6 py-3 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors"
+          >
+            <i class="ri-magic-line mr-2"></i>
+            开始AI识别导入
+          </button>
+        </div>
       </div>
     </div>
 
@@ -131,6 +173,13 @@
       :categories="categories"
       :loading="loading"
       @confirm-import="handleBulkImport"
+    />
+
+    <!-- AI文章识别导入模态框 -->
+    <ArticleImportModal
+      v-model="showArticleImportModal"
+      :categories="categories"
+      @terms-extracted="handleAITermsExtracted"
     />
   </div>
 </template>
@@ -143,6 +192,8 @@ import { useTermsStore } from '@/stores/terms'
 import { TermsService } from '@/services/termsService'
 import DuplicateChecker from '@/components/terms/DuplicateChecker.vue'
 import BulkImportModal from '@/components/terms/BulkImportModal.vue'
+import ArticleImportModal from '@/components/terms/ArticleImportModal.vue'
+import type { ClassifiedTerm } from '@/services/aiService'
 
 const termsStore = useTermsStore()
 const router = useRouter()
@@ -163,6 +214,7 @@ const processing = ref(false)
 const error = ref<string | null>(null)
 const successMessage = ref<string | null>(null)
 const showBulkImportModal = ref(false)
+const showArticleImportModal = ref(false)
 
 // 查重相关状态
 const duplicateChecking = ref(false)
@@ -388,6 +440,55 @@ const handleBulkImport = async (selectedTerms: any[]) => {
     error.value = err.message || '批量导入失败'
   } finally {
     loading.value = false
+  }
+}
+
+// AI术语提取处理
+const handleAITermsExtracted = async (classifiedTerms: ClassifiedTerm[]) => {
+  try {
+    // 将AI提取的术语转换为批量导入格式
+    const termsToProcess = classifiedTerms.map((term, index) => ({
+      english_term: term.english_term,
+      chinese_term: term.chinese_term,
+      category_id: term.category_id,
+      status: 'approved',
+      rowIndex: index + 1,
+      confidence: term.confidence,
+      classification_confidence: term.classification_confidence,
+      context_english: term.context_english,
+      context_chinese: term.context_chinese
+    }))
+
+    // 进行查重检查
+    processing.value = true
+    console.log('开始AI术语查重检查...')
+    
+    const duplicateResults = await TermsService.checkBatchDuplicates(termsToProcess)
+    
+    // 为每个term添加查重结果和选择状态
+    const processedTerms = termsToProcess.map((term, index) => ({
+      ...term,
+      duplicateResult: duplicateResults[index],
+      hasDuplicates: duplicateResults[index]?.hasDuplicates || false,
+      selected: !duplicateResults[index]?.hasDuplicates // 默认选择无重复的项目
+    }))
+    
+    bulkTerms.value = processedTerms
+    showBulkImportModal.value = true
+    
+    // 显示处理结果
+    const duplicateCount = processedTerms.filter(t => t.hasDuplicates).length
+    if (duplicateCount > 0) {
+      successMessage.value = `AI识别完成！提取 ${processedTerms.length} 个术语，其中 ${duplicateCount} 个存在重复或相似项。`
+    } else {
+      successMessage.value = `AI识别完成！提取 ${processedTerms.length} 个术语，未发现重复项，可以安全导入。`
+    }
+    
+  } catch (error) {
+    console.error('AI术语处理失败:', error)
+    error.value = error instanceof Error ? error.message : 'AI术语处理失败'
+  } finally {
+    processing.value = false
   }
 }
 
