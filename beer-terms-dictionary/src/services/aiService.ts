@@ -277,6 +277,8 @@ ${chineseText}
 - 只返回JSON格式，不要包含其他解释文字
 - 术语要准确对应
 - 避免重复提取相同术语
+- 如果术语太多，请优先提取最重要和最相关的术语
+- 确保JSON格式完整，每个术语对象都要有完整的字段
     `.trim()
   }
 
@@ -332,10 +334,11 @@ ${JSON.stringify(terms, null, 2)}
 }
 
 注意：
-- 只返回JSON格式
+- 只返回JSON格式，不要包含其他解释文字
 - 选择最合适的分类
 - category_id必须是上述列表中的真实ID
 - 给出分类置信度
+- 确保JSON格式完整，每个分类结果都要有完整的字段
     `.trim()
   }
 
@@ -357,22 +360,7 @@ ${JSON.stringify(terms, null, 2)}
       console.log('Gemini响应:', text.substring(0, 200) + '...')
       
       try {
-        // 处理Gemini可能返回的代码块格式
-        let cleanText = text.trim()
-        if (cleanText.startsWith('```json')) {
-          cleanText = cleanText.replace(/^```json\s*/, '').replace(/\s*```$/, '')
-        } else if (cleanText.startsWith('```')) {
-          cleanText = cleanText.replace(/^```\s*/, '').replace(/\s*```$/, '')
-        }
-        
-        const parsed = JSON.parse(cleanText)
-        const terms = parsed.terms || []
-        
-        // 规范化术语大小写
-        return terms.map((term: ExtractedTerm) => ({
-          ...term,
-          english_term: this.normalizeTermCapitalization(term.english_term)
-        }))
+        return this.parseGeminiResponse(text, 'extraction')
       } catch (parseError) {
         console.error('Gemini响应解析失败:', text)
         throw new Error('AI响应格式错误')
@@ -444,16 +432,7 @@ ${JSON.stringify(terms, null, 2)}
       console.log('Gemini分类响应:', text.substring(0, 200) + '...')
       
       try {
-        // 处理Gemini可能返回的代码块格式
-        let cleanText = text.trim()
-        if (cleanText.startsWith('```json')) {
-          cleanText = cleanText.replace(/^```json\s*/, '').replace(/\s*```$/, '')
-        } else if (cleanText.startsWith('```')) {
-          cleanText = cleanText.replace(/^```\s*/, '').replace(/\s*```$/, '')
-        }
-        
-        const parsed = JSON.parse(cleanText)
-        const classifiedTerms = parsed.classified_terms || []
+        const classifiedTerms = this.parseGeminiResponse(text, 'classification')
         
         // 确保每个分类结果都有classification_confidence字段
         return classifiedTerms.map((classified: any) => {
@@ -783,6 +762,137 @@ ${JSON.stringify(terms, null, 2)}
     }
     
     return null
+  }
+
+  /**
+   * 解析Gemini响应，处理各种格式问题
+   */
+  private parseGeminiResponse(text: string, type: 'extraction' | 'classification'): any[] {
+    // 处理Gemini可能返回的代码块格式
+    let cleanText = text.trim()
+    
+    // 移除代码块标记
+    if (cleanText.startsWith('```json')) {
+      cleanText = cleanText.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+    } else if (cleanText.startsWith('```')) {
+      cleanText = cleanText.replace(/^```\s*/, '').replace(/\s*```$/, '')
+    }
+    
+    // 尝试修复不完整的JSON
+    cleanText = this.repairIncompleteJson(cleanText)
+    
+    try {
+      const parsed = JSON.parse(cleanText)
+      
+      if (type === 'extraction') {
+        const terms = parsed.terms || []
+        // 规范化术语大小写
+        return terms.map((term: ExtractedTerm) => ({
+          ...term,
+          english_term: this.normalizeTermCapitalization(term.english_term)
+        }))
+      } else {
+        return parsed.classified_terms || []
+      }
+    } catch (parseError) {
+      console.warn('JSON解析失败，尝试提取部分内容:', parseError)
+      
+      // 尝试从部分响应中提取有效内容
+      const partialTerms = this.extractPartialTerms(cleanText, type)
+      if (partialTerms.length > 0) {
+        console.log(`从不完整响应中提取到 ${partialTerms.length} 个术语`)
+        return partialTerms
+      }
+      
+      throw parseError
+    }
+  }
+
+  /**
+   * 修复不完整的JSON
+   */
+  private repairIncompleteJson(text: string): string {
+    // 检查是否以{开头但没有正确结束
+    if (text.startsWith('{') && !text.endsWith('}')) {
+      // 查找最后一个完整的对象
+      let lastCompleteIndex = -1
+      let braceCount = 0
+      
+      for (let i = 0; i < text.length; i++) {
+        if (text[i] === '{') {
+          braceCount++
+        } else if (text[i] === '}') {
+          braceCount--
+          if (braceCount === 1) { // 回到最外层大括号
+            lastCompleteIndex = i
+          }
+        }
+      }
+      
+      if (lastCompleteIndex > 0) {
+        // 截取到最后一个完整的对象
+        text = text.substring(0, lastCompleteIndex + 1)
+        
+        // 确保数组和对象正确关闭
+        if (text.includes('"terms":[') || text.includes('"classified_terms":[')) {
+          if (!text.endsWith(']}')) {
+            // 查找最后一个完整的术语对象
+            const lastTermEnd = text.lastIndexOf('}')
+            if (lastTermEnd > 0) {
+              text = text.substring(0, lastTermEnd + 1) + ']}'
+            }
+          }
+        }
+      }
+    }
+    
+    return text
+  }
+
+  /**
+   * 从部分响应中提取术语
+   */
+  private extractPartialTerms(text: string, type: 'extraction' | 'classification'): any[] {
+    const terms: any[] = []
+    
+    try {
+      // 使用正则表达式匹配术语对象
+      const termPattern = /"english_term":\s*"([^"]+)"[\s\S]*?"chinese_term":\s*"([^"]+)"[\s\S]*?"confidence":\s*([0-9.]+)/g
+      let match
+      
+      while ((match = termPattern.exec(text)) !== null) {
+        const [, englishTerm, chineseTerm, confidence] = match
+        
+        const term: any = {
+          english_term: this.normalizeTermCapitalization(englishTerm),
+          chinese_term: chineseTerm,
+          confidence: parseFloat(confidence)
+        }
+        
+        if (type === 'classification') {
+          // 尝试提取分类信息
+          const categoryPattern = new RegExp(`"english_term":\\s*"${englishTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[\\s\\S]*?"category_id":\\s*"([^"]+)"[\\s\\S]*?"category_name":\\s*"([^"]+)"`, 'i')
+          const categoryMatch = categoryPattern.exec(text)
+          
+          if (categoryMatch) {
+            term.category_id = categoryMatch[1]
+            term.category_name = categoryMatch[2]
+            term.classification_confidence = 0.5 // 默认置信度
+          } else {
+            term.category_id = '20'
+            term.category_name = '其他'
+            term.classification_confidence = 0.1
+          }
+        }
+        
+        terms.push(term)
+      }
+      
+    } catch (error) {
+      console.warn('部分内容提取失败:', error)
+    }
+    
+    return terms
   }
 
   /**
