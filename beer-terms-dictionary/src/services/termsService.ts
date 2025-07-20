@@ -125,6 +125,28 @@ export class TermsService {
   }
 
   /**
+   * 获取每个分类的术语数量
+   */
+  static async getCategoryTermsCounts() {
+    const { data, error } = await supabase
+      .from('terms')
+      .select('category_id')
+
+    if (error) throw error
+    
+    // 统计每个分类的术语数量
+    const counts: Record<string, number> = {}
+    data?.forEach(term => {
+      const categoryId = term.category_id
+      if (categoryId) {
+        counts[categoryId] = (counts[categoryId] || 0) + 1
+      }
+    })
+    
+    return counts
+  }
+
+  /**
    * 分页获取术语
    */
   static async getTermsPaginated(page: number = 1, limit: number = 20, categoryId?: string) {

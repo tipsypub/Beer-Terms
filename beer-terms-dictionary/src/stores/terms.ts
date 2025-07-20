@@ -22,6 +22,7 @@ export const useTermsStore = defineStore('terms', () => {
   const currentPage = ref(1)
   const itemsPerPage = 20
   const totalTerms = ref(0)
+  const categoryTermsCounts = ref<Record<string, number>>({})
   
   // This state will track if the last fetch returned a full page of items.
   // If it did, we assume there might be more.
@@ -44,6 +45,14 @@ export const useTermsStore = defineStore('terms', () => {
       totalTerms.value = await TermsService.getTotalTermsCount()
     } catch (err) {
       console.error('获取术语总数失败:', err)
+    }
+  }
+
+  const fetchCategoryTermsCounts = async () => {
+    try {
+      categoryTermsCounts.value = await TermsService.getCategoryTermsCounts()
+    } catch (err) {
+      console.error('获取分类术语数量失败:', err)
     }
   }
 
@@ -191,10 +200,22 @@ export const useTermsStore = defineStore('terms', () => {
         if (Array.isArray(result)) {
           // 批量添加：将所有新术语添加到列表开头
           terms.value.unshift(...result)
+          // 更新分类数量
+          result.forEach(t => {
+            if (t.category_id) {
+              categoryTermsCounts.value[t.category_id] = (categoryTermsCounts.value[t.category_id] || 0) + 1
+            }
+          })
         } else {
           // 单个添加：将新术语添加到列表开头
           terms.value.unshift(result)
+          // 更新分类数量
+          if (result.category_id) {
+            categoryTermsCounts.value[result.category_id] = (categoryTermsCounts.value[result.category_id] || 0) + 1
+          }
         }
+        // 更新总数
+        totalTerms.value += Array.isArray(result) ? result.length : 1
       }
       return result
     } catch (err) {
@@ -214,7 +235,20 @@ export const useTermsStore = defineStore('terms', () => {
       if (updatedTerm) {
         const index = terms.value.findIndex(term => term.id === id)
         if (index !== -1) {
+          const oldTerm = terms.value[index]
           terms.value[index] = updatedTerm
+          
+          // 如果分类发生变化，更新数量
+          if (oldTerm.category_id !== updatedTerm.category_id) {
+            // 减少旧分类数量
+            if (oldTerm.category_id) {
+              categoryTermsCounts.value[oldTerm.category_id] = Math.max(0, (categoryTermsCounts.value[oldTerm.category_id] || 0) - 1)
+            }
+            // 增加新分类数量
+            if (updatedTerm.category_id) {
+              categoryTermsCounts.value[updatedTerm.category_id] = (categoryTermsCounts.value[updatedTerm.category_id] || 0) + 1
+            }
+          }
         }
         if (currentTerm.value?.id === id) {
           currentTerm.value = updatedTerm
@@ -239,7 +273,16 @@ export const useTermsStore = defineStore('terms', () => {
       // 从本地状态中移除术语
       const index = terms.value.findIndex(term => term.id === id)
       if (index !== -1) {
+        const deletedTerm = terms.value[index]
         terms.value.splice(index, 1)
+        
+        // 更新分类数量
+        if (deletedTerm.category_id) {
+          categoryTermsCounts.value[deletedTerm.category_id] = Math.max(0, (categoryTermsCounts.value[deletedTerm.category_id] || 0) - 1)
+        }
+        
+        // 更新总数
+        totalTerms.value = Math.max(0, totalTerms.value - 1)
       }
       
       // 如果当前查看的是被删除的术语，清空当前术语
@@ -262,7 +305,8 @@ export const useTermsStore = defineStore('terms', () => {
     await Promise.all([
       fetchCategories(),
       fetchTermsPaginated(1),
-      fetchTotalTermsCount()
+      fetchTotalTermsCount(),
+      fetchCategoryTermsCounts()
     ])
   }
 
@@ -278,6 +322,7 @@ export const useTermsStore = defineStore('terms', () => {
     currentPage,
     itemsPerPage,
     totalTerms,
+    categoryTermsCounts,
     
     // 计算属性
     filteredTerms,
@@ -297,6 +342,7 @@ export const useTermsStore = defineStore('terms', () => {
     updateTerm,
     deleteTerm,
     init,
-    fetchTotalTermsCount
+    fetchTotalTermsCount,
+    fetchCategoryTermsCounts
   }
 })

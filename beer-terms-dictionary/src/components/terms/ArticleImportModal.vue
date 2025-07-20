@@ -100,7 +100,7 @@
                   ref="englishFileInput"
                 />
                 <button 
-                  @click="$refs.englishFileInput?.click()"
+                  @click="($refs.englishFileInput as HTMLInputElement)?.click()"
                   class="px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600"
                 >
                   选择文件
@@ -194,7 +194,7 @@
                   ref="chineseFileInput"
                 />
                 <button 
-                  @click="$refs.chineseFileInput?.click()"
+                  @click="($refs.chineseFileInput as HTMLInputElement)?.click()"
                   class="px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600"
                 >
                   选择文件
@@ -245,8 +245,41 @@
       <div v-if="processing" class="px-6 py-4 border-t border-gray-200 bg-blue-50">
         <div class="space-y-3">
           <div class="flex items-center justify-between">
-            <h4 class="text-sm font-medium text-blue-900">AI分析进度</h4>
-            <span class="text-xs text-blue-600">{{ Math.round(progressPercentage) }}%</span>
+            <h4 class="text-sm font-medium text-blue-900">
+              {{ isChunkedExtraction ? '分块AI分析进度' : 'AI分析进度' }}
+              <span v-if="isChunkedExtraction && chunkedProgress" class="ml-2 text-xs text-gray-600">
+                ({{ chunkedProgress.state.processedChunks }}/{{ chunkedProgress.state.totalChunks }} 块)
+              </span>
+            </h4>
+            <div class="flex items-center space-x-2">
+              <!-- 分块处理控制按钮 -->
+              <div v-if="isChunkedExtraction && currentExtractionSession" class="flex space-x-1">
+                <button
+                  v-if="!extractionPaused"
+                  @click="pauseExtraction"
+                  class="px-2 py-1 text-xs bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200"
+                  title="暂停处理"
+                >
+                  <i class="ri-pause-line"></i>
+                </button>
+                <button
+                  v-if="extractionPaused"
+                  @click="resumeExtraction"
+                  class="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200"
+                  title="继续处理"
+                >
+                  <i class="ri-play-line"></i>
+                </button>
+                <button
+                  @click="abortExtraction"
+                  class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200"
+                  title="中止处理"
+                >
+                  <i class="ri-stop-line"></i>
+                </button>
+              </div>
+              <span class="text-xs text-blue-600">{{ Math.round(progressPercentage) }}%</span>
+            </div>
           </div>
           
           <!-- 总体进度条 -->
@@ -259,8 +292,30 @@
           
           <!-- 当前步骤显示 -->
           <div class="flex items-center text-sm text-blue-800">
-            <i class="ri-loader-line animate-spin mr-2"></i>
-            <span>{{ currentStepDescription }}</span>
+            <i class="ri-loader-line animate-spin mr-2" :class="{ 'animate-spin': !extractionPaused }"></i>
+            <span>{{ extractionPaused ? '处理已暂停' : currentStepDescription }}</span>
+          </div>
+          
+          <!-- 分块提取详细信息 -->
+          <div v-if="isChunkedExtraction && chunkedProgress" class="text-xs text-blue-700 space-y-1">
+            <div class="flex justify-between">
+              <span>已处理块数:</span>
+              <span>{{ chunkedProgress.state.processedChunks }}/{{ chunkedProgress.state.totalChunks }}</span>
+            </div>
+            <div class="flex justify-between">
+              <span>已提取术语:</span>
+              <span>{{ chunkedProgress.state.extractedTerms.length }} 个</span>
+            </div>
+            <div v-if="chunkedProgress.state.failedChunks.length > 0" class="flex justify-between text-red-600">
+              <span>失败块数:</span>
+              <span>{{ chunkedProgress.state.failedChunks.length }} 个</span>
+            </div>
+            <div v-if="chunkedProgress.currentChunk" class="text-gray-600">
+              <span>当前处理: {{ chunkedProgress.currentChunk.id }}</span>
+            </div>
+            <div v-if="chunkedProgress.recentTerms && chunkedProgress.recentTerms.length > 0" class="text-green-600">
+              <span>最新提取: {{ chunkedProgress.recentTerms.map(t => t.english_term).join(', ') }}</span>
+            </div>
           </div>
           
           <!-- 步骤列表 -->
@@ -330,7 +385,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { aiService, type AIProvider, type ExtractedTerm, type ClassifiedTerm } from '@/services/aiService'
+import { aiService, type AIProvider, type ExtractedTerm, type ClassifiedTerm, type ExtractionProgress } from '@/services/aiService'
 import { fileProcessor, type FileProcessResult } from '@/services/fileProcessor'
 import TermExtractionPreview from './TermExtractionPreview.vue'
 
@@ -369,6 +424,15 @@ const chineseFileResult = ref<FileProcessResult | null>(null)
 // 术语提取结果
 const extractedTerms = ref<ClassifiedTerm[]>([])
 const showExtractionPreview = ref(false)
+
+// 分块提取相关状态
+const isChunkedExtraction = ref(false)
+const currentExtractionSession = ref<string | null>(null)
+const chunkedProgress = ref<ExtractionProgress | null>(null)
+const extractionPaused = ref(false)
+
+// 文本长度阈值，超过则使用分块提取
+const CHUNKED_EXTRACTION_THRESHOLD = 8000
 
 // 进度条状态
 const progressPercentage = ref(0)
@@ -451,6 +515,15 @@ const resetState = () => {
   processing.value = false
   connectionStatus.value = null
   resetProgress()
+  
+  // 清理分块提取状态
+  if (currentExtractionSession.value) {
+    aiService.cleanupExtraction(currentExtractionSession.value)
+  }
+  isChunkedExtraction.value = false
+  currentExtractionSession.value = null
+  chunkedProgress.value = null
+  extractionPaused.value = false
 }
 
 const testAIConnection = async () => {
@@ -576,23 +649,141 @@ const startAIAnalysis = async () => {
       ? chineseFileResult.value?.content || ''
       : chineseText.value
 
-    // 第一步：提取术语
-    updateProgress('extract', 0, `使用${selectedAIProvider.value.toUpperCase()}模型`)
+    // 检查文本长度决定使用普通提取还是分块提取
+    const totalLength = englishContent.length + chineseContent.length
+    const shouldUseChunkedExtraction = totalLength > CHUNKED_EXTRACTION_THRESHOLD
+
+    if (shouldUseChunkedExtraction) {
+      await startChunkedAIAnalysis(englishContent, chineseContent)
+    } else {
+      await startSimpleAIAnalysis(englishContent, chineseContent)
+    }
     
-    const terms = await aiService.extractTerms(
+  } catch (error) {
+    console.error('AI分析失败:', error)
+    currentStepDescription.value = '分析失败'
+    progressPercentage.value = 0
+    alert(`AI分析失败: ${error}`)
+  } finally {
+    if (!isChunkedExtraction.value) {
+      setTimeout(() => {
+        processing.value = false
+        resetProgress()
+      }, showExtractionPreview.value ? 1000 : 0)
+    }
+  }
+}
+
+// 简单提取模式（原有逻辑）
+const startSimpleAIAnalysis = async (englishContent: string, chineseContent: string) => {
+  // 第一步：提取术语
+  updateProgress('extract', 0, `使用${selectedAIProvider.value.toUpperCase()}模型`)
+  
+  const terms = await aiService.extractTerms(
+    englishContent,
+    chineseContent,
+    selectedAIProvider.value
+  )
+
+  if (terms.length === 0) {
+    throw new Error('未找到相关的啤酒术语')
+  }
+
+  completeStep('extract')
+  updateProgress('classify', 0, `发现${terms.length}个术语`)
+
+  // 第二步：智能分类
+  const classifiedTerms = await aiService.classifyTerms(
+    terms,
+    selectedAIProvider.value,
+    props.categories
+  )
+
+  completeStep('classify')
+  updateProgress('validate', 0, '验证分类结果')
+
+  // 模拟验证和规范化过程
+  await new Promise(resolve => setTimeout(resolve, 500))
+  completeStep('validate')
+  
+  updateProgress('complete', 0, '准备预览界面')
+  await new Promise(resolve => setTimeout(resolve, 300))
+  
+  // 完成所有步骤
+  progressPercentage.value = 100
+  processingSteps.value.forEach(step => {
+    step.completed = true
+    step.active = false
+  })
+  currentStepDescription.value = '分析完成！'
+
+  extractedTerms.value = classifiedTerms
+  
+  // 延迟一点时间让用户看到完成状态
+  setTimeout(() => {
+    showExtractionPreview.value = true
+  }, 500)
+}
+
+// 分块提取模式
+const startChunkedAIAnalysis = async (englishContent: string, chineseContent: string) => {
+  isChunkedExtraction.value = true
+  updateProgress('extract', 0, `文本较长，启用分块处理模式`)
+  
+  try {
+    // 开始分块提取
+    const sessionId = await aiService.startChunkedExtraction(
       englishContent,
       chineseContent,
-      selectedAIProvider.value
+      selectedAIProvider.value,
+      {
+        chunkSize: 2000,
+        maxConcurrency: 2,
+        retryAttempts: 3,
+        saveInterval: 5000
+      },
+      (progress: ExtractionProgress) => {
+        chunkedProgress.value = progress
+        
+        // 更新进度条
+        const chunkProgress = progress.state.processedChunks / progress.state.totalChunks
+        updateProgress('extract', chunkProgress * 100, 
+          `处理中 ${progress.state.processedChunks}/${progress.state.totalChunks} 块`)
+        
+        // 检查是否完成
+        if (progress.state.isCompleted) {
+          handleChunkedExtractionComplete(progress.state.extractedTerms)
+        }
+        
+        // 检查是否中止
+        if (progress.state.isAborted) {
+          processing.value = false
+          isChunkedExtraction.value = false
+          currentExtractionSession.value = null
+          currentStepDescription.value = '处理已中止'
+        }
+        
+        // 更新暂停状态
+        extractionPaused.value = progress.state.isPaused
+      }
     )
+    
+    currentExtractionSession.value = sessionId
+    
+  } catch (error) {
+    isChunkedExtraction.value = false
+    currentExtractionSession.value = null
+    throw error
+  }
+}
 
-    if (terms.length === 0) {
-      throw new Error('未找到相关的啤酒术语')
-    }
-
+// 处理分块提取完成
+const handleChunkedExtractionComplete = async (terms: ExtractedTerm[]) => {
+  try {
     completeStep('extract')
-    updateProgress('classify', 0, `发现${terms.length}个术语`)
+    updateProgress('classify', 0, `发现${terms.length}个术语，开始分类`)
 
-    // 第二步：智能分类
+    // 对提取的术语进行分类
     const classifiedTerms = await aiService.classifyTerms(
       terms,
       selectedAIProvider.value,
@@ -602,7 +793,6 @@ const startAIAnalysis = async () => {
     completeStep('classify')
     updateProgress('validate', 0, '验证分类结果')
 
-    // 模拟验证和规范化过程
     await new Promise(resolve => setTimeout(resolve, 500))
     completeStep('validate')
     
@@ -615,26 +805,28 @@ const startAIAnalysis = async () => {
       step.completed = true
       step.active = false
     })
-    currentStepDescription.value = '分析完成！'
+    currentStepDescription.value = '分块分析完成！'
 
     extractedTerms.value = classifiedTerms
     
-    // 延迟一点时间让用户看到完成状态
+    // 清理分块提取状态
+    isChunkedExtraction.value = false
+    if (currentExtractionSession.value) {
+      aiService.cleanupExtraction(currentExtractionSession.value)
+      currentExtractionSession.value = null
+    }
+    
+    // 延迟显示预览
     setTimeout(() => {
       showExtractionPreview.value = true
+      processing.value = false
+      resetProgress()
     }, 500)
     
   } catch (error) {
-    console.error('AI分析失败:', error)
-    // 更新进度条显示错误状态
-    currentStepDescription.value = '分析失败'
-    progressPercentage.value = 0
-    alert(`AI分析失败: ${error}`)
-  } finally {
-    setTimeout(() => {
-      processing.value = false
-      resetProgress()
-    }, showExtractionPreview.value ? 1000 : 0)
+    console.error('分块提取后处理失败:', error)
+    currentStepDescription.value = '分类处理失败'
+    throw error
   }
 }
 
@@ -642,6 +834,40 @@ const handleTermsImport = (terms: ClassifiedTerm[]) => {
   emit('terms-extracted', terms)
   showExtractionPreview.value = false
   closeModal()
+}
+
+// 分块提取控制函数
+const pauseExtraction = () => {
+  if (currentExtractionSession.value) {
+    const success = aiService.pauseExtraction(currentExtractionSession.value)
+    if (success) {
+      extractionPaused.value = true
+    }
+  }
+}
+
+const resumeExtraction = () => {
+  if (currentExtractionSession.value) {
+    extractionPaused.value = false
+    // 注意：由于aiService的resumeExtraction目前只返回false，我们需要手动重新开始
+    // 在实际应用中，可能需要改进aiService的resumeExtraction方法
+    alert('恢复功能正在开发中，请重新开始分析')
+  }
+}
+
+const abortExtraction = () => {
+  if (currentExtractionSession.value) {
+    const success = aiService.abortExtraction(currentExtractionSession.value)
+    if (success) {
+      processing.value = false
+      isChunkedExtraction.value = false
+      currentExtractionSession.value = null
+      chunkedProgress.value = null
+      extractionPaused.value = false
+      resetProgress()
+      currentStepDescription.value = '处理已中止'
+    }
+  }
 }
 
 // 监听AI提供商变化，重置连接状态

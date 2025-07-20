@@ -21,6 +21,12 @@
           class="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg"
         >
           <span class="truncate">{{ category.name_zh }}</span>
+          <span 
+            v-if="getCategoryCount(category.id) > 0"
+            class="px-2 py-0.5 text-xs bg-gray-200 text-gray-700 rounded-full"
+          >
+            {{ getCategoryCount(category.id) }}
+          </span>
         </button>
       </nav>
     </div>
@@ -34,8 +40,13 @@ import { useTermsStore } from '@/stores/terms'
 const termsStore = useTermsStore()
 const categories = computed(() => termsStore.categories)
 const totalTerms = computed(() => termsStore.totalTerms)
+const categoryTermsCounts = computed(() => termsStore.categoryTermsCounts)
 
 const selectCategory = (categoryId: string | null) => {
   termsStore.selectCategoryAndFetch(categoryId)
+}
+
+const getCategoryCount = (categoryId: string) => {
+  return categoryTermsCounts.value[categoryId] || 0
 }
 </script>

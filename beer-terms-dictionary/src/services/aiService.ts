@@ -20,6 +20,47 @@ export interface ClassifiedTerm extends ExtractedTerm {
   classification_confidence: number
 }
 
+// 文本分块接口
+export interface TextChunk {
+  id: string
+  englishText: string
+  chineseText: string
+  startIndex: number
+  endIndex: number
+  chunkSize: number
+}
+
+// 分步提取状态接口
+export interface ExtractionState {
+  sessionId: string
+  totalChunks: number
+  processedChunks: number
+  currentChunkIndex: number
+  extractedTerms: ExtractedTerm[]
+  failedChunks: string[]
+  isCompleted: boolean
+  isPaused: boolean
+  isAborted: boolean
+  startTime: number
+  lastUpdateTime: number
+}
+
+// 分步提取进度回调接口
+export interface ExtractionProgress {
+  state: ExtractionState
+  currentChunk?: TextChunk
+  recentTerms?: ExtractedTerm[]
+  error?: string
+}
+
+// 分步提取配置
+export interface ChunkedExtractionConfig {
+  chunkSize: number // 每块的字符数
+  maxConcurrency: number // 最大并发数
+  retryAttempts: number // 重试次数
+  saveInterval: number // 保存间隔（毫秒）
+}
+
 // AI服务配置
 interface AIConfig {
   geminiApiKey: string
@@ -30,6 +71,18 @@ class AIService {
   private geminiClient: GoogleGenAI | null = null
   private kimiClient: OpenAI | null = null
   private config: AIConfig
+  
+  // 分步提取相关状态
+  private extractionSessions: Map<string, ExtractionState> = new Map()
+  private activeExtractions: Map<string, AbortController> = new Map()
+  
+  // 默认配置
+  private defaultChunkedConfig: ChunkedExtractionConfig = {
+    chunkSize: 2000, // 2000字符每块
+    maxConcurrency: 2, // 最多2个并发请求
+    retryAttempts: 3, // 最多重试3次
+    saveInterval: 5000 // 每5秒保存一次状态
+  }
 
   constructor() {
     this.config = {
@@ -354,7 +407,7 @@ ${JSON.stringify(terms, null, 2)}
               validCategoryName = foundCategory.name_zh
             } else {
               // 尝试智能匹配分类
-              const smartCategory = this.findBestCategoryMatch(originalTerm, categories)
+              const smartCategory = originalTerm ? this.findBestCategoryMatch(originalTerm, categories) : null
               if (smartCategory) {
                 validCategoryId = smartCategory.id
                 validCategoryName = smartCategory.name_zh
@@ -374,7 +427,11 @@ ${JSON.stringify(terms, null, 2)}
           }
           
           return {
-            ...originalTerm,
+            english_term: originalTerm?.english_term || classified.english_term,
+            chinese_term: originalTerm?.chinese_term || classified.chinese_term,
+            confidence: originalTerm?.confidence || 0.5,
+            context_english: originalTerm?.context_english,
+            context_chinese: originalTerm?.context_chinese,
             category_id: validCategoryId || '20',
             category_name: validCategoryName || 'Other',
             classification_confidence: classified.classification_confidence || 0.5
@@ -447,7 +504,7 @@ ${JSON.stringify(terms, null, 2)}
             validCategoryName = foundCategory.name_zh
           } else {
             // 尝试智能匹配分类
-            const smartCategory = this.findBestCategoryMatch(originalTerm, categories)
+            const smartCategory = originalTerm ? this.findBestCategoryMatch(originalTerm, categories) : null
             if (smartCategory) {
               validCategoryId = smartCategory.id
               validCategoryName = smartCategory.name_zh
@@ -467,8 +524,11 @@ ${JSON.stringify(terms, null, 2)}
         }
         
         return {
-          ...originalTerm,
           english_term: this.normalizeTermCapitalization(originalTerm?.english_term || classified.english_term),
+          chinese_term: originalTerm?.chinese_term || classified.chinese_term,
+          confidence: originalTerm?.confidence || 0.5,
+          context_english: originalTerm?.context_english,
+          context_chinese: originalTerm?.context_chinese,
           category_id: validCategoryId || '20',
           category_name: validCategoryName || 'Other',
           classification_confidence: classified.classification_confidence || 0.5
@@ -651,6 +711,328 @@ ${JSON.stringify(terms, null, 2)}
     }
     
     return null
+  }
+
+  /**
+   * 智能文本分块 - 按句子边界分割，避免截断
+   */
+  private createTextChunks(englishText: string, chineseText: string, chunkSize: number): TextChunk[] {
+    const chunks: TextChunk[] = []
+    
+    // 按句子分割英文文本
+    const englishSentences = this.splitIntoSentences(englishText)
+    const chineseSentences = this.splitIntoSentences(chineseText)
+    
+    // 确保句子数量匹配，否则按段落分割
+    let englishParts = englishSentences
+    let chineseParts = chineseSentences
+    
+    if (Math.abs(englishSentences.length - chineseSentences.length) > englishSentences.length * 0.3) {
+      // 句子数量差异太大，改用段落分割
+      englishParts = englishText.split(/\n\s*\n/).filter(p => p.trim())
+      chineseParts = chineseText.split(/\n\s*\n/).filter(p => p.trim())
+    }
+    
+    let currentEnglishChunk = ''
+    let currentChineseChunk = ''
+    let startIndex = 0
+    
+    for (let i = 0; i < Math.max(englishParts.length, chineseParts.length); i++) {
+      const englishPart = englishParts[i] || ''
+      const chinesePart = chineseParts[i] || ''
+      
+      // 检查添加这句话是否会超过块大小
+      const potentialEnglish = currentEnglishChunk + (currentEnglishChunk ? ' ' : '') + englishPart
+      const potentialChinese = currentChineseChunk + (currentChineseChunk ? ' ' : '') + chinesePart
+      
+      if ((potentialEnglish.length > chunkSize || potentialChinese.length > chunkSize) && currentEnglishChunk) {
+        // 创建当前块
+        chunks.push({
+          id: `chunk_${chunks.length}`,
+          englishText: currentEnglishChunk.trim(),
+          chineseText: currentChineseChunk.trim(),
+          startIndex,
+          endIndex: startIndex + currentEnglishChunk.length,
+          chunkSize: Math.max(currentEnglishChunk.length, currentChineseChunk.length)
+        })
+        
+        // 开始新块
+        currentEnglishChunk = englishPart
+        currentChineseChunk = chinesePart
+        startIndex = startIndex + currentEnglishChunk.length
+      } else {
+        // 添加到当前块
+        currentEnglishChunk = potentialEnglish
+        currentChineseChunk = potentialChinese
+      }
+    }
+    
+    // 添加最后一块
+    if (currentEnglishChunk.trim() || currentChineseChunk.trim()) {
+      chunks.push({
+        id: `chunk_${chunks.length}`,
+        englishText: currentEnglishChunk.trim(),
+        chineseText: currentChineseChunk.trim(),
+        startIndex,
+        endIndex: startIndex + currentEnglishChunk.length,
+        chunkSize: Math.max(currentEnglishChunk.length, currentChineseChunk.length)
+      })
+    }
+    
+    return chunks
+  }
+  
+  /**
+   * 按句子分割文本
+   */
+  private splitIntoSentences(text: string): string[] {
+    // 英文句子结束符号
+    const sentenceEnders = /[.!?]+\s+/g
+    // 中文句子结束符号
+    const chineseSentenceEnders = /[。！？]+\s*/g
+    
+    let sentences = text.split(sentenceEnders)
+    if (sentences.length <= 1) {
+      sentences = text.split(chineseSentenceEnders)
+    }
+    
+    return sentences.filter(s => s.trim().length > 0)
+  }
+  
+  /**
+   * 开始分步提取术语
+   */
+  async startChunkedExtraction(
+    englishText: string,
+    chineseText: string,
+    provider: AIProvider = 'gemini',
+    config?: Partial<ChunkedExtractionConfig>,
+    onProgress?: (progress: ExtractionProgress) => void
+  ): Promise<string> {
+    const sessionId = `extraction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const finalConfig = { ...this.defaultChunkedConfig, ...config }
+    
+    // 创建文本分块
+    const chunks = this.createTextChunks(englishText, chineseText, finalConfig.chunkSize)
+    
+    // 初始化提取状态
+    const state: ExtractionState = {
+      sessionId,
+      totalChunks: chunks.length,
+      processedChunks: 0,
+      currentChunkIndex: 0,
+      extractedTerms: [],
+      failedChunks: [],
+      isCompleted: false,
+      isPaused: false,
+      isAborted: false,
+      startTime: Date.now(),
+      lastUpdateTime: Date.now()
+    }
+    
+    this.extractionSessions.set(sessionId, state)
+    
+    // 创建中止控制器
+    const abortController = new AbortController()
+    this.activeExtractions.set(sessionId, abortController)
+    
+    // 开始处理
+    this.processChunksSequentially(chunks, provider, finalConfig, state, onProgress, abortController.signal)
+      .catch(error => {
+        console.error('分步提取失败:', error)
+        state.isAborted = true
+        state.lastUpdateTime = Date.now()
+        onProgress?.({ state, error: error.message })
+      })
+    
+    return sessionId
+  }
+  
+  /**
+   * 顺序处理文本块
+   */
+  private async processChunksSequentially(
+    chunks: TextChunk[],
+    provider: AIProvider,
+    config: ChunkedExtractionConfig,
+    state: ExtractionState,
+    onProgress?: (progress: ExtractionProgress) => void,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    const semaphore = new Array(config.maxConcurrency).fill(null)
+    let activePromises = 0
+    
+    for (let i = state.currentChunkIndex; i < chunks.length; i++) {
+      // 检查是否被中止或暂停
+      if (abortSignal?.aborted || state.isAborted) {
+        console.log('提取被中止')
+        break
+      }
+      
+      if (state.isPaused) {
+        console.log('提取被暂停')
+        break
+      }
+      
+      // 等待有可用的并发槽位
+      while (activePromises >= config.maxConcurrency) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      
+      const chunk = chunks[i]
+      state.currentChunkIndex = i
+      state.lastUpdateTime = Date.now()
+      
+      // 处理当前块
+      activePromises++
+      this.processChunkWithRetry(chunk, provider, config, state, onProgress)
+        .finally(() => {
+          activePromises--
+        })
+      
+      // 小延迟避免API限流
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    
+    // 等待所有活动请求完成
+    while (activePromises > 0) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    
+    // 更新完成状态
+    if (!state.isAborted && !state.isPaused) {
+      state.isCompleted = true
+      state.lastUpdateTime = Date.now()
+      onProgress?.({ state })
+    }
+  }
+  
+  /**
+   * 带重试的块处理
+   */
+  private async processChunkWithRetry(
+    chunk: TextChunk,
+    provider: AIProvider,
+    config: ChunkedExtractionConfig,
+    state: ExtractionState,
+    onProgress?: (progress: ExtractionProgress) => void
+  ): Promise<void> {
+    let lastError: Error | null = null
+    
+    for (let attempt = 0; attempt < config.retryAttempts; attempt++) {
+      try {
+        const terms = await this.extractTerms(chunk.englishText, chunk.chineseText, provider)
+        
+        // 成功提取，更新状态
+        state.extractedTerms.push(...terms)
+        state.processedChunks++
+        state.lastUpdateTime = Date.now()
+        
+        // 触发进度回调
+        onProgress?.({
+          state: { ...state },
+          currentChunk: chunk,
+          recentTerms: terms
+        })
+        
+        return
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('未知错误')
+        console.warn(`块 ${chunk.id} 处理失败 (尝试 ${attempt + 1}/${config.retryAttempts}):`, error)
+        
+        // 重试前等待
+        if (attempt < config.retryAttempts - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)))
+        }
+      }
+    }
+    
+    // 所有重试都失败了
+    console.error(`块 ${chunk.id} 处理最终失败:`, lastError)
+    state.failedChunks.push(chunk.id)
+    state.processedChunks++
+    state.lastUpdateTime = Date.now()
+    
+    onProgress?.({
+      state: { ...state },
+      currentChunk: chunk,
+      error: `块 ${chunk.id} 处理失败: ${lastError?.message}`
+    })
+  }
+  
+  /**
+   * 暂停提取
+   */
+  pauseExtraction(sessionId: string): boolean {
+    const state = this.extractionSessions.get(sessionId)
+    if (state && !state.isCompleted && !state.isAborted) {
+      state.isPaused = true
+      state.lastUpdateTime = Date.now()
+      return true
+    }
+    return false
+  }
+  
+  /**
+   * 恢复提取
+   */
+  resumeExtraction(sessionId: string, onProgress?: (progress: ExtractionProgress) => void): boolean {
+    const state = this.extractionSessions.get(sessionId)
+    if (state && state.isPaused && !state.isCompleted && !state.isAborted) {
+      state.isPaused = false
+      state.lastUpdateTime = Date.now()
+      
+      // 重新开始处理（从当前位置继续）
+      // 这里需要重新获取原始参数，简化起见，返回false提示需要重新开始
+      return false
+    }
+    return false
+  }
+  
+  /**
+   * 中止提取
+   */
+  abortExtraction(sessionId: string): boolean {
+    const state = this.extractionSessions.get(sessionId)
+    const controller = this.activeExtractions.get(sessionId)
+    
+    if (state) {
+      state.isAborted = true
+      state.lastUpdateTime = Date.now()
+    }
+    
+    if (controller) {
+      controller.abort()
+      this.activeExtractions.delete(sessionId)
+    }
+    
+    return true
+  }
+  
+  /**
+   * 获取提取状态
+   */
+  getExtractionState(sessionId: string): ExtractionState | null {
+    return this.extractionSessions.get(sessionId) || null
+  }
+  
+  /**
+   * 清理提取会话
+   */
+  cleanupExtraction(sessionId: string): void {
+    this.extractionSessions.delete(sessionId)
+    const controller = this.activeExtractions.get(sessionId)
+    if (controller) {
+      controller.abort()
+      this.activeExtractions.delete(sessionId)
+    }
+  }
+  
+  /**
+   * 获取所有活跃的提取会话
+   */
+  getActiveExtractions(): ExtractionState[] {
+    return Array.from(this.extractionSessions.values())
   }
 
   /**
