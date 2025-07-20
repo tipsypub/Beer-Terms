@@ -165,7 +165,7 @@ class AIService {
     onProgress?: (current: number, total: number) => void
   ): Promise<ClassifiedTerm[]> {
     // 如果术语数量超过阈值，使用分批处理
-    const CLASSIFICATION_BATCH_SIZE = 20 // 每批最多20个术语
+    const CLASSIFICATION_BATCH_SIZE = 50 // 每批最多50个术语
     
     if (terms.length <= CLASSIFICATION_BATCH_SIZE) {
       // 小批量，直接处理

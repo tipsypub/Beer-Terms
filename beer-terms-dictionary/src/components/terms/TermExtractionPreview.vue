@@ -56,6 +56,20 @@
           <!-- 批量操作 -->
           <div class="flex space-x-2">
             <button 
+              @click="startDuplicateCheck" 
+              :disabled="localLoading || manualDuplicateChecking"
+              class="px-3 py-2 text-sm bg-orange-100 text-orange-700 rounded hover:bg-orange-200 disabled:opacity-50"
+            >
+              {{ manualDuplicateChecking ? '查重中...' : '启动查重检查' }}
+            </button>
+            <button 
+              v-if="duplicateGroups.length > 0"
+              @click="showDuplicateModal = true"
+              class="px-3 py-2 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200"
+            >
+              管理重复项 ({{ duplicateGroups.length }})
+            </button>
+            <button 
               @click="selectHighConfidence" 
               class="px-3 py-2 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200"
             >
@@ -73,7 +87,7 @@
 
       <!-- 统计信息 -->
       <div class="p-4 bg-blue-50 border-b border-gray-200">
-        <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm">
+        <div class="grid grid-cols-2 sm:grid-cols-6 gap-4 text-sm">
           <div class="text-center">
             <div class="font-bold text-xl text-gray-900">{{ filteredTerms.length }}</div>
             <div class="text-gray-600">显示中</div>
@@ -91,7 +105,11 @@
             <div class="text-gray-600">低置信度</div>
           </div>
           <div class="text-center">
-            <div class="font-bold text-xl text-orange-600">{{ selectedCount }}</div>
+            <div class="font-bold text-xl text-orange-600">{{ duplicateCount }}</div>
+            <div class="text-gray-600">重复项</div>
+          </div>
+          <div class="text-center">
+            <div class="font-bold text-xl text-blue-600">{{ selectedCount }}</div>
             <div class="text-gray-600">已选择</div>
           </div>
         </div>
@@ -126,9 +144,10 @@
                 v-for="(term, index) in filteredTerms" 
                 :key="index" 
                 :class="{
-                  'bg-green-50': term.confidence >= 0.8,
-                  'bg-yellow-50': term.confidence >= 0.6 && term.confidence < 0.8,
-                  'bg-red-50': term.confidence < 0.6
+                  'bg-green-50': term.confidence >= 0.8 && !term.hasDuplicates,
+                  'bg-yellow-50': term.confidence >= 0.6 && term.confidence < 0.8 && !term.hasDuplicates,
+                  'bg-red-50': term.confidence < 0.6 && !term.hasDuplicates,
+                  'bg-orange-100 border-l-4 border-orange-500': term.hasDuplicates
                 }"
                 class="hover:bg-opacity-80 transition-colors"
               >
@@ -140,11 +159,22 @@
                   />
                 </td>
                 <td class="px-4 py-3 text-sm font-medium text-gray-900">
-                  <div class="max-w-xs">
-                    {{ term.english_term }}
+                  <div class="max-w-xs flex items-center">
+                    <span>{{ term.english_term }}</span>
+                    <span v-if="term.hasDuplicates" class="ml-2 px-2 py-1 text-xs bg-orange-200 text-orange-800 rounded-full">
+                      重复
+                    </span>
                   </div>
                   <div v-if="term.context_english" class="text-xs text-gray-500 mt-1 italic">
                     "{{ truncateContext(term.context_english) }}"
+                  </div>
+                  <div v-if="term.hasDuplicates && term.duplicateResult" class="text-xs text-orange-600 mt-1">
+                    <div v-if="term.duplicateResult.exactDuplicates.length > 0">
+                      精确重复: {{ term.duplicateResult.exactDuplicates.length }} 项
+                    </div>
+                    <div v-if="term.duplicateResult.fuzzyDuplicates.length > 0">
+                      相似重复: {{ term.duplicateResult.fuzzyDuplicates.length }} 项
+                    </div>
                   </div>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-900">
@@ -233,10 +263,10 @@
             </button>
             <button 
               @click="confirmImport"
-              :disabled="selectedCount === 0 || loading || localLoading"
+              :disabled="selectedCount === 0 || loading"
               class="px-6 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-orange-500"
             >
-              {{ (loading || localLoading) ? (localLoading ? '查重中...' : '处理中...') : `确认导入 ${selectedCount} 个术语` }}
+              {{ loading ? '处理中...' : `确认导入 ${selectedCount} 个术语` }}
             </button>
           </div>
         </div>
@@ -321,6 +351,110 @@
         </div>
       </div>
     </div>
+
+    <!-- 重复项管理模态框 -->
+    <div v-if="showDuplicateModal" class="fixed inset-0 bg-black bg-opacity-75 z-80 flex justify-center items-center p-4">
+      <div class="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-auto">
+        <div class="p-6">
+          <div class="flex justify-between items-center mb-6">
+            <h3 class="text-xl font-bold">重复项管理</h3>
+            <button 
+              @click="showDuplicateModal = false"
+              class="text-gray-400 hover:text-gray-600"
+            >
+              <i class="ri-close-line text-xl"></i>
+            </button>
+          </div>
+          
+          <div class="space-y-6">
+            <div 
+              v-for="(group, index) in duplicateGroups" 
+              :key="index"
+              class="border border-gray-200 rounded-lg p-4"
+            >
+              <h4 class="font-semibold text-gray-900 mb-3">
+                重复组 {{ index + 1 }} - {{ group.type === 'exact' ? '精确重复' : group.type === 'fuzzy' ? '相似重复' : '内部重复' }}
+              </h4>
+              
+              <div class="space-y-3">
+                <div 
+                  v-for="(item, itemIndex) in group.items" 
+                  :key="itemIndex"
+                  class="flex items-center justify-between p-3 rounded border"
+                  :class="{
+                    'bg-green-50 border-green-200': item.selected,
+                    'bg-gray-50 border-gray-200': !item.selected,
+                    'bg-blue-50 border-blue-200': item.isFromDatabase
+                  }"
+                >
+                  <div class="flex-1">
+                    <div class="flex items-center space-x-4">
+                      <input 
+                        type="radio" 
+                        :name="`group_${index}`"
+                        :value="itemIndex"
+                        v-model="group.selectedIndex"
+                        class="h-4 w-4 text-orange-600 focus:ring-orange-500"
+                      />
+                      <div class="flex-1">
+                        <div class="flex space-x-4">
+                          <div class="flex-1">
+                            <label class="block text-xs font-medium text-gray-700">英文术语</label>
+                            <div class="font-medium">{{ item.english_term }}</div>
+                          </div>
+                          <div class="flex-1">
+                            <label class="block text-xs font-medium text-gray-700">中文术语</label>
+                            <div>{{ item.chinese_term }}</div>
+                          </div>
+                          <div class="w-32">
+                            <label class="block text-xs font-medium text-gray-700">分类</label>
+                            <div class="text-sm">{{ getCategoryName(item.category_id) }}</div>
+                          </div>
+                        </div>
+                        <div class="flex items-center space-x-4 mt-2 text-xs text-gray-500">
+                          <span v-if="item.confidence">置信度: {{ (item.confidence * 100).toFixed(0) }}%</span>
+                          <span v-if="item.isFromDatabase" class="text-blue-600">数据库中的术语</span>
+                          <span v-else class="text-green-600">当前导入的术语</span>
+                          <span v-if="item.similarity">相似度: {{ (item.similarity * 100).toFixed(0) }}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="ml-4">
+                    <button
+                      @click="item.selected = group.selectedIndex === itemIndex"
+                      class="text-xs text-blue-600 hover:text-blue-800"
+                    >
+                      选择此项
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="flex justify-between items-center mt-6 pt-4 border-t">
+            <div class="text-sm text-gray-600">
+              共 {{ duplicateGroups.length }} 个重复组，请选择每组中要保留的术语
+            </div>
+            <div class="flex space-x-3">
+              <button 
+                @click="showDuplicateModal = false"
+                class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button 
+                @click="applyDuplicateResolution"
+                class="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700"
+              >
+                应用选择
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -330,6 +464,7 @@ import type { ClassifiedTerm } from '@/services/aiService'
 
 interface TermWithSelection extends ClassifiedTerm {
   selected?: boolean
+  hasDuplicates?: boolean
 }
 
 interface Props {
@@ -358,6 +493,29 @@ const showScrollHint = ref(true)
 // 本地loading状态（用于查重）
 const localLoading = ref(false)
 
+// 手动查重相关状态
+const manualDuplicateChecking = ref(false)
+const showDuplicateModal = ref(false)
+const duplicateGroups = ref<DuplicateGroup[]>([])
+
+// 重复项组接口
+interface DuplicateGroup {
+  type: 'exact' | 'fuzzy' | 'internal'
+  items: DuplicateItem[]
+  selectedIndex: number
+}
+
+interface DuplicateItem {
+  english_term: string
+  chinese_term: string
+  category_id: string
+  confidence?: number
+  isFromDatabase: boolean
+  selected: boolean
+  similarity?: number
+  originalIndex?: number
+}
+
 // 处理滚动事件
 const handleScroll = (event: Event) => {
   const target = event.target as HTMLDivElement
@@ -370,12 +528,104 @@ const handleScroll = (event: Event) => {
 const termsWithSelection = ref<TermWithSelection[]>([])
 
 // 监听提取的术语变化
-watch(() => props.extractedTerms, (newTerms) => {
-  termsWithSelection.value = newTerms.map(term => ({
+watch(() => props.extractedTerms, async (newTerms) => {
+  if (newTerms.length === 0) {
+    termsWithSelection.value = []
+    return
+  }
+
+  console.log('处理提取的术语，跳过自动查重')
+  
+  // 1. 仅进行基于英文术语的去重
+  const deduplicatedTerms = removeDuplicatesByEnglishTerm(newTerms)
+  console.log(`去重前: ${newTerms.length} 个术语，去重后: ${deduplicatedTerms.length} 个术语`)
+  
+  // 2. 设置选择状态（默认选择高置信度的术语）
+  termsWithSelection.value = deduplicatedTerms.map(term => ({
     ...term,
-    selected: term.confidence >= 0.8 // 默认选择高置信度术语
+    selected: term.confidence >= 0.8,
+    hasDuplicates: false,
+    duplicateResult: null
   }))
 }, { immediate: true })
+
+// 基于英文术语去重的函数
+const removeDuplicatesByEnglishTerm = (terms: ClassifiedTerm[]): ClassifiedTerm[] => {
+  const seenEnglishTerms = new Set<string>()
+  const uniqueTerms: ClassifiedTerm[] = []
+  
+  for (const term of terms) {
+    const normalizedEnglish = term.english_term.toLowerCase().trim()
+    
+    if (!seenEnglishTerms.has(normalizedEnglish)) {
+      seenEnglishTerms.add(normalizedEnglish)
+      uniqueTerms.push(term)
+    } else {
+      console.log(`跳过重复的英文术语: "${term.english_term}"`)
+    }
+  }
+  
+  return uniqueTerms
+}
+
+// 执行数据库查重检查
+const performDuplicateCheck = async (terms: ClassifiedTerm[]): Promise<ClassifiedTerm[]> => {
+  try {
+    // 导入查重服务
+    const { TermsService } = await import('@/services/termsService')
+    
+    const termsWithDuplicateCheck: ClassifiedTerm[] = []
+    
+    for (const term of terms) {
+      try {
+        // 检查精确重复（主要检查英文术语）
+        const exactDuplicates = await TermsService.checkExactDuplicate(term.english_term, term.chinese_term)
+        
+        // 检查模糊重复（主要检查英文术语）
+        const fuzzyDuplicates = await TermsService.checkFuzzyDuplicate(term.english_term, term.chinese_term, 0.85)
+        
+        const duplicateResult = {
+          exactDuplicates,
+          fuzzyDuplicates,
+          hasDuplicates: exactDuplicates.length > 0 || fuzzyDuplicates.length > 0
+        }
+        
+        termsWithDuplicateCheck.push({
+          ...term,
+          duplicateResult,
+          hasDuplicates: duplicateResult.hasDuplicates
+        })
+        
+      } catch (error) {
+        console.error(`术语 "${term.english_term}" 查重失败:`, error)
+        termsWithDuplicateCheck.push({
+          ...term,
+          duplicateResult: {
+            exactDuplicates: [],
+            fuzzyDuplicates: [],
+            hasDuplicates: false
+          },
+          hasDuplicates: false
+        })
+      }
+    }
+    
+    return termsWithDuplicateCheck
+    
+  } catch (error) {
+    console.error('查重过程失败:', error)
+    // 查重失败时返回原术语
+    return terms.map(term => ({
+      ...term,
+      duplicateResult: {
+        exactDuplicates: [],
+        fuzzyDuplicates: [],
+        hasDuplicates: false
+      },
+      hasDuplicates: false
+    }))
+  }
+}
 
 // 计算属性
 const filteredTerms = computed(() => {
@@ -418,6 +668,7 @@ const selectedCount = computed(() => termsWithSelection.value.filter(term => ter
 const highConfidenceCount = computed(() => termsWithSelection.value.filter(term => term.confidence > 0.8).length)
 const mediumConfidenceCount = computed(() => termsWithSelection.value.filter(term => term.confidence >= 0.6 && term.confidence <= 0.8).length)
 const lowConfidenceCount = computed(() => termsWithSelection.value.filter(term => term.confidence < 0.6).length)
+const duplicateCount = computed(() => termsWithSelection.value.filter(term => term.hasDuplicates).length)
 
 const allSelected = computed(() => termsWithSelection.value.length > 0 && termsWithSelection.value.every(term => term.selected))
 const allFiltered = computed(() => filteredTerms.value.length > 0 && filteredTerms.value.every(term => term.selected))
@@ -470,6 +721,271 @@ const showTermDetail = (term: ClassifiedTerm) => {
   selectedTermForDetail.value = term
 }
 
+// 手动启动查重检查
+const startDuplicateCheck = async () => {
+  if (termsWithSelection.value.length === 0) {
+    alert('没有术语需要查重')
+    return
+  }
+
+  manualDuplicateChecking.value = true
+  duplicateGroups.value = []
+
+  try {
+    console.log('开始手动查重检查...')
+    const { TermsService } = await import('@/services/termsService')
+    
+    // 1. 检查当前导入术语之间的重复
+    const internalDuplicates = findInternalDuplicates(termsWithSelection.value)
+    console.log(`发现内部重复组: ${internalDuplicates.length}`)
+    
+    // 2. 检查与数据库的重复
+    const databaseDuplicates = await findDatabaseDuplicates(termsWithSelection.value, TermsService)
+    console.log(`发现数据库重复组: ${databaseDuplicates.length}`)
+    
+    // 3. 合并重复组
+    duplicateGroups.value = [...internalDuplicates, ...databaseDuplicates]
+    
+    // 4. 更新术语的重复状态
+    updateTermDuplicateStatus()
+    
+    if (duplicateGroups.value.length > 0) {
+      console.log(`总共发现 ${duplicateGroups.value.length} 个重复组`)
+    } else {
+      alert('未发现重复术语，可以安全导入')
+    }
+    
+  } catch (error) {
+    console.error('查重检查失败:', error)
+    alert('查重检查失败，请重试')
+  } finally {
+    manualDuplicateChecking.value = false
+  }
+}
+
+// 查找内部重复（当前导入术语之间的重复）
+const findInternalDuplicates = (terms: TermWithSelection[]): DuplicateGroup[] => {
+  const groups: DuplicateGroup[] = []
+  const processed = new Set<number>()
+  
+  for (let i = 0; i < terms.length; i++) {
+    if (processed.has(i)) continue
+    
+    const term1 = terms[i]
+    const duplicates: DuplicateItem[] = [{
+      english_term: term1.english_term,
+      chinese_term: term1.chinese_term,
+      category_id: term1.category_id,
+      confidence: term1.confidence,
+      isFromDatabase: false,
+      selected: false,
+      originalIndex: i
+    }]
+    
+    for (let j = i + 1; j < terms.length; j++) {
+      if (processed.has(j)) continue
+      
+      const term2 = terms[j]
+      const similarity = calculateTermSimilarity(term1, term2)
+      
+      if (similarity.isExact) {
+        duplicates.push({
+          english_term: term2.english_term,
+          chinese_term: term2.chinese_term,
+          category_id: term2.category_id,
+          confidence: term2.confidence,
+          isFromDatabase: false,
+          selected: false,
+          similarity: 1.0,
+          originalIndex: j
+        })
+        processed.add(j)
+      } else if (similarity.isSimilar) {
+        duplicates.push({
+          english_term: term2.english_term,
+          chinese_term: term2.chinese_term,
+          category_id: term2.category_id,
+          confidence: term2.confidence,
+          isFromDatabase: false,
+          selected: false,
+          similarity: similarity.score,
+          originalIndex: j
+        })
+        processed.add(j)
+      }
+    }
+    
+    if (duplicates.length > 1) {
+      groups.push({
+        type: 'internal',
+        items: duplicates,
+        selectedIndex: 0 // 默认选择第一个
+      })
+      processed.add(i)
+    }
+  }
+  
+  return groups
+}
+
+// 查找与数据库的重复
+const findDatabaseDuplicates = async (terms: TermWithSelection[], TermsService: any): Promise<DuplicateGroup[]> => {
+  const groups: DuplicateGroup[] = []
+  
+  for (let i = 0; i < terms.length; i++) {
+    const term = terms[i]
+    
+    try {
+      // 检查精确重复
+      const exactDuplicates = await TermsService.checkExactDuplicate(term.english_term, term.chinese_term)
+      
+      // 检查模糊重复
+      const fuzzyDuplicates = await TermsService.checkFuzzyDuplicate(term.english_term, term.chinese_term, 0.85)
+      
+      if (exactDuplicates.length > 0 || fuzzyDuplicates.length > 0) {
+        const duplicateItems: DuplicateItem[] = []
+        
+        // 添加当前导入的术语
+        duplicateItems.push({
+          english_term: term.english_term,
+          chinese_term: term.chinese_term,
+          category_id: term.category_id,
+          confidence: term.confidence,
+          isFromDatabase: false,
+          selected: false,
+          originalIndex: i
+        })
+        
+        // 添加数据库中的精确重复
+        exactDuplicates.forEach((dbTerm: any) => {
+          duplicateItems.push({
+            english_term: dbTerm.english_term,
+            chinese_term: dbTerm.chinese_term,
+            category_id: dbTerm.category_id,
+            isFromDatabase: true,
+            selected: false,
+            similarity: 1.0
+          })
+        })
+        
+        // 添加数据库中的模糊重复
+        fuzzyDuplicates.forEach((dbTerm: any) => {
+          duplicateItems.push({
+            english_term: dbTerm.english_term,
+            chinese_term: dbTerm.chinese_term,
+            category_id: dbTerm.category_id,
+            isFromDatabase: true,
+            selected: false,
+            similarity: Math.max(dbTerm.englishSimilarity || 0, dbTerm.chineseSimilarity || 0)
+          })
+        })
+        
+        groups.push({
+          type: exactDuplicates.length > 0 ? 'exact' : 'fuzzy',
+          items: duplicateItems,
+          selectedIndex: 1 // 默认选择数据库中的术语
+        })
+      }
+    } catch (error) {
+      console.error(`术语 "${term.english_term}" 查重失败:`, error)
+    }
+  }
+  
+  return groups
+}
+
+// 计算术语相似度
+const calculateTermSimilarity = (term1: TermWithSelection, term2: TermWithSelection) => {
+  const english1 = term1.english_term.toLowerCase().trim()
+  const english2 = term2.english_term.toLowerCase().trim()
+  const chinese1 = term1.chinese_term.toLowerCase().trim()
+  const chinese2 = term2.chinese_term.toLowerCase().trim()
+  
+  const isExact = (english1 === english2) || (chinese1 === chinese2)
+  
+  // 简单的相似度计算
+  const englishSim = calculateStringSimilarity(english1, english2)
+  const chineseSim = calculateStringSimilarity(chinese1, chinese2)
+  const maxSim = Math.max(englishSim, chineseSim)
+  
+  return {
+    isExact,
+    isSimilar: maxSim >= 0.85,
+    score: maxSim
+  }
+}
+
+// 计算字符串相似度
+const calculateStringSimilarity = (str1: string, str2: string): number => {
+  if (str1 === str2) return 1.0
+  if (str1.length === 0 || str2.length === 0) return 0.0
+
+  const matrix = Array(str2.length + 1).fill(null).map(() => Array(str1.length + 1).fill(null))
+
+  for (let i = 0; i <= str1.length; i++) matrix[0][i] = i
+  for (let j = 0; j <= str2.length; j++) matrix[j][0] = j
+
+  for (let j = 1; j <= str2.length; j++) {
+    for (let i = 1; i <= str1.length; i++) {
+      const indicator = str1[i - 1] === str2[j - 1] ? 0 : 1
+      matrix[j][i] = Math.min(
+        matrix[j][i - 1] + 1,
+        matrix[j - 1][i] + 1,
+        matrix[j - 1][i - 1] + indicator
+      )
+    }
+  }
+
+  const maxLength = Math.max(str1.length, str2.length)
+  return (maxLength - matrix[str2.length][str1.length]) / maxLength
+}
+
+// 更新术语重复状态
+const updateTermDuplicateStatus = () => {
+  // 重置所有术语的重复状态
+  termsWithSelection.value.forEach(term => {
+    term.hasDuplicates = false
+  })
+  
+  // 根据重复组更新状态
+  duplicateGroups.value.forEach(group => {
+    group.items.forEach(item => {
+      if (!item.isFromDatabase && typeof item.originalIndex === 'number') {
+        const term = termsWithSelection.value[item.originalIndex]
+        if (term) {
+          term.hasDuplicates = true
+        }
+      }
+    })
+  })
+}
+
+// 应用重复项解决方案
+const applyDuplicateResolution = () => {
+  // 根据用户选择更新术语状态
+  duplicateGroups.value.forEach(group => {
+    const selectedItem = group.items[group.selectedIndex]
+    
+    group.items.forEach((item, index) => {
+      if (!item.isFromDatabase && typeof item.originalIndex === 'number') {
+        const term = termsWithSelection.value[item.originalIndex]
+        if (term) {
+          // 如果选择的是数据库中的术语，则取消选择当前导入的术语
+          if (selectedItem.isFromDatabase) {
+            term.selected = false
+          } else {
+            // 如果选择的是当前导入的术语，只保留选中的那个
+            term.selected = index === group.selectedIndex
+          }
+        }
+      }
+    })
+  })
+  
+  showDuplicateModal.value = false
+  alert('重复项处理完成！已根据您的选择更新术语状态。')
+}
+
 const confirmImport = async () => {
   const selectedTerms = termsWithSelection.value
     .filter(term => term.selected)
@@ -487,60 +1003,8 @@ const confirmImport = async () => {
     return
   }
 
-  // 开始自动查重
-  localLoading.value = true
-  
-  try {
-    // 导入现有的查重服务
-    const { TermsService } = await import('@/services/termsService')
-    
-    // 为每个术语添加查重结果
-    const termsWithDuplicateCheck = []
-    
-    for (let i = 0; i < selectedTerms.length; i++) {
-      const term = selectedTerms[i]
-      
-      try {
-        // 检查精确重复
-        const exactDuplicates = await TermsService.checkExactDuplicate(term.english_term, term.chinese_term)
-        
-        // 检查模糊重复
-        const fuzzyDuplicates = await TermsService.checkFuzzyDuplicate(term.english_term, term.chinese_term, 0.85)
-        
-        const duplicateResult = {
-          exactDuplicates,
-          fuzzyDuplicates,
-          hasDuplicates: exactDuplicates.length > 0 || fuzzyDuplicates.length > 0
-        }
-        
-        termsWithDuplicateCheck.push({
-          ...term,
-          duplicateResult
-        })
-        
-      } catch (error) {
-        console.error(`术语 "${term.english_term}" 查重失败:`, error)
-        // 查重失败的术语仍然包含，但没有查重结果
-        termsWithDuplicateCheck.push({
-          ...term,
-          duplicateResult: {
-            exactDuplicates: [],
-            fuzzyDuplicates: [],
-            hasDuplicates: false
-          }
-        })
-      }
-    }
-    
-    emit('confirm-import', termsWithDuplicateCheck)
-    
-  } catch (error) {
-    console.error('查重过程失败:', error)
-    alert('查重过程出现错误，将直接导入术语')
-    emit('confirm-import', selectedTerms)
-  } finally {
-    localLoading.value = false
-  }
+  // 直接导入，不再进行自动查重
+  emit('confirm-import', selectedTerms)
 }
 
 // 重置状态

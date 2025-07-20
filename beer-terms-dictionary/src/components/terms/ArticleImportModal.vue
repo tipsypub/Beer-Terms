@@ -44,8 +44,17 @@
             </span>
           </div>
           
-          <div class="text-xs text-gray-500">
-            支持格式: PDF, Word, Markdown, HTML, TXT
+          <div class="flex items-center space-x-4">
+            <div class="text-xs text-gray-500">
+              支持格式: PDF, Word, Markdown, HTML, TXT
+            </div>
+            <button 
+              @click="loadTestData"
+              class="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded hover:bg-gray-200"
+              title="加载测试数据"
+            >
+              测试数据
+            </button>
           </div>
         </div>
       </div>
@@ -537,6 +546,28 @@ const testAIConnection = async () => {
   } finally {
     testingConnection.value = false
   }
+}
+
+const loadTestData = async () => {
+  const { testBeerTerms } = await import('@/data/testTerms')
+  
+  // 将测试数据转换为ClassifiedTerm格式
+  const classifiedTerms = testBeerTerms.map(term => ({
+    ...term,
+    category_name: getCategoryName(term.category_id)
+  }))
+  
+  extractedTerms.value = classifiedTerms
+  showExtractionPreview.value = true
+  processing.value = false
+  resetProgress()
+  
+  console.log('已加载测试数据:', classifiedTerms.length, '个术语')
+}
+
+const getCategoryName = (categoryId: string) => {
+  const category = props.categories.find(c => c.id === categoryId)
+  return category ? category.name_zh : '其他'
 }
 
 const getWordCount = (text: string): number => {

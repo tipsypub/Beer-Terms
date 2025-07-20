@@ -446,8 +446,10 @@ const handleBulkImport = async (selectedTerms: any[]) => {
 // AI术语提取处理
 const handleAITermsExtracted = async (classifiedTerms: ClassifiedTerm[]) => {
   try {
+    console.log('处理AI提取的术语，跳过自动查重')
+    
     // 将AI提取的术语转换为批量导入格式
-    const termsToProcess = classifiedTerms.map((term, index) => ({
+    const processedTerms = classifiedTerms.map((term, index) => ({
       english_term: term.english_term,
       chinese_term: term.chinese_term,
       category_id: term.category_id,
@@ -456,57 +458,16 @@ const handleAITermsExtracted = async (classifiedTerms: ClassifiedTerm[]) => {
       confidence: term.confidence,
       classification_confidence: term.classification_confidence,
       context_english: term.context_english,
-      context_chinese: term.context_chinese
+      context_chinese: term.context_chinese,
+      hasDuplicates: false,
+      selected: term.confidence >= 0.8 // 默认选择高置信度的术语
     }))
-
-    // 检查是否已经进行过查重
-    const hasExistingDuplicateCheck = classifiedTerms.some(term => term.duplicateResult)
-    
-    let processedTerms
-    
-    if (hasExistingDuplicateCheck) {
-      console.log('术语已包含查重结果，跳过重新查重')
-      // 术语已经包含查重结果，直接使用
-      processedTerms = classifiedTerms.map((term, index) => ({
-        english_term: term.english_term,
-        chinese_term: term.chinese_term,
-        category_id: term.category_id,
-        status: 'approved',
-        rowIndex: index + 1,
-        confidence: term.confidence,
-        classification_confidence: term.classification_confidence,
-        context_english: term.context_english,
-        context_chinese: term.context_chinese,
-        duplicateResult: term.duplicateResult,
-        hasDuplicates: term.duplicateResult?.hasDuplicates || false,
-        selected: !term.duplicateResult?.hasDuplicates // 默认选择无重复的项目
-      }))
-    } else {
-      // 进行查重检查
-      processing.value = true
-      console.log('开始AI术语查重检查...')
-      
-      const duplicateResults = await TermsService.checkBatchDuplicates(termsToProcess)
-      
-      // 为每个term添加查重结果和选择状态
-      processedTerms = termsToProcess.map((term, index) => ({
-        ...term,
-        duplicateResult: duplicateResults[index],
-        hasDuplicates: duplicateResults[index]?.hasDuplicates || false,
-        selected: !duplicateResults[index]?.hasDuplicates // 默认选择无重复的项目
-      }))
-    }
     
     bulkTerms.value = processedTerms
     showBulkImportModal.value = true
     
     // 显示处理结果
-    const duplicateCount = processedTerms.filter(t => t.hasDuplicates).length
-    if (duplicateCount > 0) {
-      successMessage.value = `AI识别完成！提取 ${processedTerms.length} 个术语，其中 ${duplicateCount} 个存在重复或相似项。`
-    } else {
-      successMessage.value = `AI识别完成！提取 ${processedTerms.length} 个术语，未发现重复项，可以安全导入。`
-    }
+    successMessage.value = `AI识别完成！提取 ${processedTerms.length} 个术语。可在预览界面手动启动查重检查。`
     
   } catch (error) {
     console.error('AI术语处理失败:', error)
