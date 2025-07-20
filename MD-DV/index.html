@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown 分割工具 - MD-DV</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div id="app">
+        <div class="container mx-auto px-4 py-8 max-w-6xl">
+            <!-- 头部 -->
+            <header class="text-center mb-8">
+                <h1 class="text-3xl font-bold text-gray-900 mb-2">Markdown 分割工具</h1>
+                <p class="text-gray-600">将对应的中英文MD文件分割成若干个对照的小文件</p>
+            </header>
+
+            <!-- 上传区域 -->
+            <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
+                <h2 class="text-xl font-semibold mb-4">文件上传</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- 英文文件上传 -->
+                    <div class="space-y-4">
+                        <label class="block text-sm font-medium text-gray-700">英文 Markdown 文件</label>
+                        <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
+                            <i class="ri-file-text-line text-3xl text-gray-400 mb-2"></i>
+                            <div class="text-sm text-gray-600 mb-2">拖拽文件到此处或点击选择</div>
+                            <input type="file" id="englishFile" accept=".md,.markdown" class="hidden">
+                            <button onclick="document.getElementById('englishFile').click()" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">
+                                选择文件
+                            </button>
+                        </div>
+                        <div id="englishFileInfo" class="text-sm text-gray-600 hidden">
+                            <i class="ri-file-line mr-1"></i>
+                            <span id="englishFileName"></span>
+                            <span id="englishFileSize" class="text-gray-400 ml-2"></span>
+                        </div>
+                    </div>
+
+                    <!-- 中文文件上传 -->
+                    <div class="space-y-4">
+                        <label class="block text-sm font-medium text-gray-700">中文 Markdown 文件</label>
+                        <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-green-400 transition-colors">
+                            <i class="ri-file-text-line text-3xl text-gray-400 mb-2"></i>
+                            <div class="text-sm text-gray-600 mb-2">拖拽文件到此处或点击选择</div>
+                            <input type="file" id="chineseFile" accept=".md,.markdown" class="hidden">
+                            <button onclick="document.getElementById('chineseFile').click()" class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm">
+                                选择文件
+                            </button>
+                        </div>
+                        <div id="chineseFileInfo" class="text-sm text-gray-600 hidden">
+                            <i class="ri-file-line mr-1"></i>
+                            <span id="chineseFileName"></span>
+                            <span id="chineseFileSize" class="text-gray-400 ml-2"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分割设置 -->
+                <div class="mt-6 p-4 bg-gray-50 rounded-lg">
+                    <h3 class="text-lg font-medium mb-4">分割设置</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">分割方式</label>
+                            <select id="splitMethod" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="heading">按标题分割</option>
+                                <option value="paragraph">按段落数量</option>
+                                <option value="lines">按行数</option>
+                            </select>
+                        </div>
+                        <div id="paragraphCountDiv" class="hidden">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">每个文件段落数</label>
+                            <input type="number" id="paragraphCount" value="5" min="1" max="50" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div id="lineCountDiv" class="hidden">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">每个文件行数</label>
+                            <input type="number" id="lineCount" value="100" min="10" max="1000" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">文件名前缀</label>
+                            <input type="text" id="filePrefix" value="section" placeholder="section" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="mt-6 flex justify-center space-x-4">
+                    <button id="processBtn" onclick="processFiles()" disabled class="px-6 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i class="ri-scissors-line mr-2"></i>
+                        开始分割
+                    </button>
+                    <button id="downloadBtn" onclick="downloadAll()" disabled class="px-6 py-3 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i class="ri-download-line mr-2"></i>
+                        下载全部
+                    </button>
+                </div>
+            </div>
+
+            <!-- 处理状态 -->
+            <div id="statusArea" class="bg-white rounded-lg shadow-lg p-6 mb-8 hidden">
+                <h2 class="text-xl font-semibold mb-4">处理状态</h2>
+                <div class="space-y-2">
+                    <div class="flex items-center">
+                        <div id="statusIcon" class="mr-3">
+                            <i class="ri-loader-line animate-spin text-blue-500"></i>
+                        </div>
+                        <span id="statusText">正在处理文件...</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 结果预览 -->
+            <div id="resultArea" class="bg-white rounded-lg shadow-lg p-6 hidden">
+                <h2 class="text-xl font-semibold mb-4">分割结果</h2>
+                <div id="resultGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- 结果文件将在这里显示 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="src/services/markdownSplitter.js"></script>
+    <script src="src/services/fileProcessor.js"></script>
+    <script src="src/app.js"></script>
+</body>
+</html>
