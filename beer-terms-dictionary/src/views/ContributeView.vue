@@ -459,19 +459,43 @@ const handleAITermsExtracted = async (classifiedTerms: ClassifiedTerm[]) => {
       context_chinese: term.context_chinese
     }))
 
-    // 进行查重检查
-    processing.value = true
-    console.log('开始AI术语查重检查...')
+    // 检查是否已经进行过查重
+    const hasExistingDuplicateCheck = classifiedTerms.some(term => term.duplicateResult)
     
-    const duplicateResults = await TermsService.checkBatchDuplicates(termsToProcess)
+    let processedTerms
     
-    // 为每个term添加查重结果和选择状态
-    const processedTerms = termsToProcess.map((term, index) => ({
-      ...term,
-      duplicateResult: duplicateResults[index],
-      hasDuplicates: duplicateResults[index]?.hasDuplicates || false,
-      selected: !duplicateResults[index]?.hasDuplicates // 默认选择无重复的项目
-    }))
+    if (hasExistingDuplicateCheck) {
+      console.log('术语已包含查重结果，跳过重新查重')
+      // 术语已经包含查重结果，直接使用
+      processedTerms = classifiedTerms.map((term, index) => ({
+        english_term: term.english_term,
+        chinese_term: term.chinese_term,
+        category_id: term.category_id,
+        status: 'approved',
+        rowIndex: index + 1,
+        confidence: term.confidence,
+        classification_confidence: term.classification_confidence,
+        context_english: term.context_english,
+        context_chinese: term.context_chinese,
+        duplicateResult: term.duplicateResult,
+        hasDuplicates: term.duplicateResult?.hasDuplicates || false,
+        selected: !term.duplicateResult?.hasDuplicates // 默认选择无重复的项目
+      }))
+    } else {
+      // 进行查重检查
+      processing.value = true
+      console.log('开始AI术语查重检查...')
+      
+      const duplicateResults = await TermsService.checkBatchDuplicates(termsToProcess)
+      
+      // 为每个term添加查重结果和选择状态
+      processedTerms = termsToProcess.map((term, index) => ({
+        ...term,
+        duplicateResult: duplicateResults[index],
+        hasDuplicates: duplicateResults[index]?.hasDuplicates || false,
+        selected: !duplicateResults[index]?.hasDuplicates // 默认选择无重复的项目
+      }))
+    }
     
     bulkTerms.value = processedTerms
     showBulkImportModal.value = true

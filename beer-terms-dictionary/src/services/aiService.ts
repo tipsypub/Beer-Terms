@@ -18,6 +18,11 @@ export interface ClassifiedTerm extends ExtractedTerm {
   category_id: string
   category_name: string
   classification_confidence: number
+  duplicateResult?: {
+    exactDuplicates: any[]
+    fuzzyDuplicates: any[]
+    hasDuplicates: boolean
+  }
 }
 
 // 文本分块接口
@@ -901,18 +906,19 @@ ${JSON.stringify(terms, null, 2)}
   private createTextChunks(englishText: string, chineseText: string, chunkSize: number): TextChunk[] {
     const chunks: TextChunk[] = []
     
-    // 按句子分割英文文本
-    const englishSentences = this.splitIntoSentences(englishText)
-    const chineseSentences = this.splitIntoSentences(chineseText)
+    console.log(`开始分块，英文长度: ${englishText.length}, 中文长度: ${chineseText.length}, 块大小: ${chunkSize}`)
     
-    // 确保句子数量匹配，否则按段落分割
-    let englishParts = englishSentences
-    let chineseParts = chineseSentences
+    // 多层分割策略
+    let englishParts = this.splitText(englishText)
+    let chineseParts = this.splitText(chineseText)
     
-    if (Math.abs(englishSentences.length - chineseSentences.length) > englishSentences.length * 0.3) {
-      // 句子数量差异太大，改用段落分割
-      englishParts = englishText.split(/\n\s*\n/).filter(p => p.trim())
-      chineseParts = chineseText.split(/\n\s*\n/).filter(p => p.trim())
+    console.log(`分割后英文部分: ${englishParts.length}, 中文部分: ${chineseParts.length}`)
+    
+    // 如果分割后部分太少，强制按固定大小分割
+    if (englishParts.length <= 2 && englishText.length > chunkSize * 2) {
+      englishParts = this.forceSplitBySize(englishText, chunkSize)
+      chineseParts = this.forceSplitBySize(chineseText, chunkSize)
+      console.log(`强制分割后英文部分: ${englishParts.length}, 中文部分: ${chineseParts.length}`)
     }
     
     let currentEnglishChunk = ''
@@ -938,6 +944,8 @@ ${JSON.stringify(terms, null, 2)}
           chunkSize: Math.max(currentEnglishChunk.length, currentChineseChunk.length)
         })
         
+        console.log(`创建块 ${chunks.length - 1}, 大小: ${Math.max(currentEnglishChunk.length, currentChineseChunk.length)}`)
+        
         // 开始新块
         currentEnglishChunk = englishPart
         currentChineseChunk = chinesePart
@@ -959,9 +967,65 @@ ${JSON.stringify(terms, null, 2)}
         endIndex: startIndex + currentEnglishChunk.length,
         chunkSize: Math.max(currentEnglishChunk.length, currentChineseChunk.length)
       })
+      
+      console.log(`创建最后块 ${chunks.length - 1}, 大小: ${Math.max(currentEnglishChunk.length, currentChineseChunk.length)}`)
     }
     
+    console.log(`分块完成，总共 ${chunks.length} 块`)
     return chunks
+  }
+
+  /**
+   * 多层文本分割策略
+   */
+  private splitText(text: string): string[] {
+    // 1. 首先按段落分割
+    let parts = text.split(/\n\s*\n/).filter(p => p.trim())
+    
+    // 2. 如果段落不够多，按句子分割
+    if (parts.length <= 2) {
+      parts = this.splitIntoSentences(text)
+    }
+    
+    // 3. 如果句子也不够多，按换行分割
+    if (parts.length <= 2) {
+      parts = text.split(/\n/).filter(p => p.trim())
+    }
+    
+    // 4. 如果还是不够，按标点分割
+    if (parts.length <= 2) {
+      parts = text.split(/[.。!！?？;；,，]/).filter(p => p.trim())
+    }
+    
+    return parts
+  }
+
+  /**
+   * 强制按大小分割文本
+   */
+  private forceSplitBySize(text: string, chunkSize: number): string[] {
+    const parts: string[] = []
+    let currentPos = 0
+    
+    while (currentPos < text.length) {
+      let endPos = currentPos + chunkSize
+      
+      // 尝试在合适的位置分割（空格、标点等）
+      if (endPos < text.length) {
+        const searchEnd = Math.min(endPos + 100, text.length)
+        for (let i = endPos; i < searchEnd; i++) {
+          if (/[\s\n.。!！?？;；,，]/.test(text[i])) {
+            endPos = i + 1
+            break
+          }
+        }
+      }
+      
+      parts.push(text.substring(currentPos, endPos))
+      currentPos = endPos
+    }
+    
+    return parts.filter(p => p.trim())
   }
   
   /**

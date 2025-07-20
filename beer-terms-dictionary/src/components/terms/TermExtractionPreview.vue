@@ -233,10 +233,10 @@
             </button>
             <button 
               @click="confirmImport"
-              :disabled="selectedCount === 0 || loading"
+              :disabled="selectedCount === 0 || loading || localLoading"
               class="px-6 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-orange-500"
             >
-              {{ loading ? '处理中...' : `确认导入 ${selectedCount} 个术语` }}
+              {{ (loading || localLoading) ? (localLoading ? '查重中...' : '处理中...') : `确认导入 ${selectedCount} 个术语` }}
             </button>
           </div>
         </div>
@@ -355,6 +355,9 @@ const selectedTermForDetail = ref<ClassifiedTerm | null>(null)
 // 滚动状态
 const showScrollHint = ref(true)
 
+// 本地loading状态（用于查重）
+const localLoading = ref(false)
+
 // 处理滚动事件
 const handleScroll = (event: Event) => {
   const target = event.target as HTMLDivElement
@@ -467,7 +470,7 @@ const showTermDetail = (term: ClassifiedTerm) => {
   selectedTermForDetail.value = term
 }
 
-const confirmImport = () => {
+const confirmImport = async () => {
   const selectedTerms = termsWithSelection.value
     .filter(term => term.selected)
     .map(term => {
@@ -478,8 +481,66 @@ const confirmImport = () => {
         category_name: category ? category.name_zh : '其他'
       }
     })
+
+  if (selectedTerms.length === 0) {
+    alert('请选择要导入的术语')
+    return
+  }
+
+  // 开始自动查重
+  localLoading.value = true
   
-  emit('confirm-import', selectedTerms)
+  try {
+    // 导入现有的查重服务
+    const { TermsService } = await import('@/services/termsService')
+    
+    // 为每个术语添加查重结果
+    const termsWithDuplicateCheck = []
+    
+    for (let i = 0; i < selectedTerms.length; i++) {
+      const term = selectedTerms[i]
+      
+      try {
+        // 检查精确重复
+        const exactDuplicates = await TermsService.checkExactDuplicate(term.english_term, term.chinese_term)
+        
+        // 检查模糊重复
+        const fuzzyDuplicates = await TermsService.checkFuzzyDuplicate(term.english_term, term.chinese_term, 0.85)
+        
+        const duplicateResult = {
+          exactDuplicates,
+          fuzzyDuplicates,
+          hasDuplicates: exactDuplicates.length > 0 || fuzzyDuplicates.length > 0
+        }
+        
+        termsWithDuplicateCheck.push({
+          ...term,
+          duplicateResult
+        })
+        
+      } catch (error) {
+        console.error(`术语 "${term.english_term}" 查重失败:`, error)
+        // 查重失败的术语仍然包含，但没有查重结果
+        termsWithDuplicateCheck.push({
+          ...term,
+          duplicateResult: {
+            exactDuplicates: [],
+            fuzzyDuplicates: [],
+            hasDuplicates: false
+          }
+        })
+      }
+    }
+    
+    emit('confirm-import', termsWithDuplicateCheck)
+    
+  } catch (error) {
+    console.error('查重过程失败:', error)
+    alert('查重过程出现错误，将直接导入术语')
+    emit('confirm-import', selectedTerms)
+  } finally {
+    localLoading.value = false
+  }
 }
 
 // 重置状态
